@@ -4,7 +4,7 @@ import sys
 from preprocess_training_images import create_datasets
 
 if len(sys.argv) != 6:
-    print("Usage: python your_script.py <day_path> <night_path> <model> <start_epoch> <total_epochs>")
+    print("Usage: python script.py <day_path> <night_path> <model> <start_epoch> <total_epochs>")
     sys.exit(1)
     
 day_path = sys.argv[1]
@@ -23,7 +23,7 @@ elif (sys.argv[3] == 'lp_loss'):
     checkpoint_path = './model_checkpoints/lp_loss/cyclegan_checkpoints.'
 elif (sys.argv[3] == 'benchmark'):
     from benchmark import CycleGan, gen_G, gen_F, disc_X, disc_Y, generator_loss_fn, discriminator_loss_fn
-    checkpoint_path = './model_checkpoints/lp_loss/cyclegan_checkpoints.'
+    checkpoint_path = './model_checkpoints/benchmark/cyclegan_checkpoints.'
 else:
     print("Usage: invalid model name (try: 'bilinear')")
     sys.exit(1)
