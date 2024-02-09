@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader#
+from torch.utils.data import DataLoader
 import torch.optim as optim
 
 import albumentations as A
@@ -284,7 +284,7 @@ def main():
     if load_model != 'n':
         # load the checkpoints stored at the given directory
 
-        E = loaded_epoch
+        E = int(loaded_epoch)
 
         gen_D_checkpoint = load_model + f"{CHECKPOINT_GENERATOR_D}_{loaded_epoch}.pth.tar"
         gen_N_checkpoint = load_model + f"{CHECKPOINT_GENERATOR_N}_{loaded_epoch}.pth.tar"
