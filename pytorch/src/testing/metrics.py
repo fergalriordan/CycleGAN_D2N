@@ -3,14 +3,13 @@ from torch.utils.data import DataLoader
 
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
-import numpy as np
-#from torchvision.utils import save_image
 
 import sys
 import os
 import argparse
 
 from torchmetrics.image.kid import KernelInceptionDistance
+from torchmetrics.image.fid import FrechetInceptionDistance
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -118,19 +117,39 @@ def main():
         
     _ = torch.manual_seed(42)
 
-    kid = KernelInceptionDistance(subsets=4, subset_size=40).to(DEVICE)
-   #kid = KernelInceptionDistance().to(DEVICE)
+    kid_D2N = KernelInceptionDistance(subsets=4, subset_size=40).to(DEVICE)
+    kid_N2D = KernelInceptionDistance(subsets=4, subset_size=40).to(DEVICE)
 
     for idx, (night, gen_night) in enumerate(zip(night_images, generated_night_images)):
-        kid.update(night, real=True)
-        kid.update(gen_night, real=False)
+        kid_D2N.update(night, real=True)
+        kid_D2N.update(gen_night, real=False)
+        
+    for idx, (day, gen_day) in enumerate(zip(day_images, generated_day_images)):
+        kid_N2D.update(day, real=True)
+        kid_N2D.update(gen_day, real=False)
 
-    #kid.compute()
+    kid_D2N_mean, kid_D2N_std = kid_D2N.compute()
+    kid_N2D_mean, kid_N2D_std = kid_N2D.compute()
 
-    kid_mean, kid_std = kid.compute()
-    print(f"Kernel Inception Distance Mean: {kid_mean.item()}, Standard Deviation: {kid_std.item()}")
+    fid_D2N = FrechetInceptionDistance(feature=64).to(DEVICE)
+    fid_N2D = FrechetInceptionDistance(feature=64).to(DEVICE)
 
-    #print(f"Kernel Inception Distance: {kid.compute().item()}")
+    for idx, (night, gen_night) in enumerate(zip(night_images, generated_night_images)):
+        fid_D2N.update(night, real=True)
+        fid_D2N.update(gen_night, real=False)
+        
+    for idx, (day, gen_day) in enumerate(zip(day_images, generated_day_images)):
+        fid_N2D.update(day, real=True)
+        fid_N2D.update(gen_day, real=False)
 
+    fid_D2N = fid_D2N.compute()
+    fid_N2D = fid_N2D.compute()
+    
+    print(f"Kernel Inception Distance Mean: {kid_D2N_mean.item()}, Standard Deviation: {kid_D2N_std.item()}")
+    print(f"Kernel Inception Distance Mean: {kid_N2D_mean.item()}, Standard Deviation: {kid_N2D_std.item()}")
+
+    print(f"Frechet Inception Distance: {fid_D2N.item()}")
+    print(f"Frechet Inception Distance: {fid_N2D.item()}")
+    
 if __name__ == "__main__":
     main()
