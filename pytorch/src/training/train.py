@@ -33,14 +33,13 @@ TEST_DIR = "../data/val"
 BATCH_SIZE = 1
 LEARNING_RATE = 2e-4
 LAMBDA_IDENTITY = 0.5 # loss weight for identity loss (0.5 in TensorFlow implementation)
-LAMBDA_CYCLE = 10
-LAMBDA_MID = 5
+LAMBDA_CYCLE = 7.5
+LAMBDA_MID = 2.5
 NUM_WORKERS = 4
 NUM_EPOCHS = 200
 TRAINING_SIZE = 256
 TEST_SIZE = 1028
 
-# Training/Testing?
 LOAD_MODEL = False
 SAVE_MODEL = True
 
@@ -157,9 +156,13 @@ def train_fn(
 
             # if an encoder is passed, include mid-cycle loss term
             if encoder is not None:
-                mid_cycle_night = encoder(day)
-                mid_cycle_day = encoder(night)
-                mid_cycle_loss = l1(mid_cycle_day, mid_cycle_night)
+                mid_cycle_night1 = encoder(day)
+                mid_cycle_night2 = encoder(fake_night)
+                mid_cycle_night_loss = l1(mid_cycle_night1, mid_cycle_night2)
+
+                mid_cycle_day1 = encoder(night)
+                mid_cycle_day2 = encoder(fake_day)
+                mid_cycle_day_loss = l1(mid_cycle_day1, mid_cycle_day2)
 
                 # total loss
                 G_loss = (
@@ -169,7 +172,8 @@ def train_fn(
                     + cycle_day_loss * LAMBDA_CYCLE
                     + identity_day_loss * LAMBDA_IDENTITY
                     + identity_night_loss * LAMBDA_IDENTITY
-                    + mid_cycle_loss * LAMBDA_MID
+                    + mid_cycle_night_loss * LAMBDA_MID 
+                    + mid_cycle_day_loss * LAMBDA_MID
                 )
             
             # otherwise, no mid-cycle loss

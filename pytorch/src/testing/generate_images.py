@@ -1,24 +1,21 @@
 import torch 
-import torch.nn as nn
 from torch.utils.data import DataLoader
-import torch.optim as optim
 
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
-import random, os, numpy as np
-from tqdm import tqdm
 from torchvision.utils import save_image
 
 import sys
 import os
 import argparse
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from models import generator as gen
 from models import preprocess_data as ppd
 from models import encoder as enc
 from models import sharing_generator as sh_gen
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"using device: {DEVICE}")
