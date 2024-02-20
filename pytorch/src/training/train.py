@@ -238,6 +238,8 @@ def parse_arguments():
                         help='Path to a folder containing model checkpoints to load a pretrained model, e.g. "../outputs/training/checkpoints/epoch_200/" (default: n)')
     parser.add_argument('--loaded_epoch', type=str, default='n',
                         help='Epoch of a pretrained model to load (default: n)')
+    parser.add_argument('--learning_rate', type=float, default=2e-4, 
+                        help='Learning rate to use for training (default: 2e-4)')
     return parser.parse_args()
 
 def main():
@@ -273,6 +275,8 @@ def main():
         print("Invalid load model argument. Choose either 'y' or 'n'.")
         return
     
+    learning_rate = args.learning_rate
+
     if generator_type == 'simple':
         disc_D = disc.Discriminator(in_channels=3).to(DEVICE)
         disc_N = disc.Discriminator(in_channels=3).to(DEVICE)
@@ -288,13 +292,13 @@ def main():
     # use Adam Optimizer for both generator and discriminator
     opt_disc = optim.Adam(
         list(disc_D.parameters()) + list(disc_N.parameters()),
-        lr=LEARNING_RATE,
+        lr=learning_rate,
         betas=(0.5, 0.999),
     )
 
     opt_gen = optim.Adam(
         list(gen_N.parameters()) + list(gen_D.parameters()),
-        lr=LEARNING_RATE,
+        lr=learning_rate,
         betas=(0.5, 0.999),
     )
 
@@ -324,25 +328,25 @@ def main():
             gen_D_checkpoint,
             gen_D,
             opt_gen,
-            LEARNING_RATE,
+            learning_rate,
         )
         load_checkpoint(
             gen_N_checkpoint,
             gen_N,
             opt_gen,
-            LEARNING_RATE,
+            learning_rate,
         )
         load_checkpoint(
             disc_D_checkpoint,
             disc_D,
             opt_disc,
-            LEARNING_RATE,
+            learning_rate,
         )
         load_checkpoint(
             disc_N_checkpoint,
             disc_N,
             opt_disc,
-            LEARNING_RATE,
+            learning_rate,
         )
 
     dataset = ppd.DayNightDataset(
