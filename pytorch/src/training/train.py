@@ -16,10 +16,11 @@ import argparse
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from preprocessing import preprocess_data as ppd
+
 # import generator, discriminator and preprocessing files
 from models import generator as gen
 from models import discriminator as disc
-from models import preprocess_data as ppd
 from models import encoder as enc
 from models import sharing_generator as sh_gen
 from models import unet as un

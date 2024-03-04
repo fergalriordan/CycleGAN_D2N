@@ -14,7 +14,7 @@ from torchmetrics.image.fid import FrechetInceptionDistance
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from models import generator as gen
-from models import preprocess_data as ppd
+from CycleGAN_D2N.pytorch.src.preprocessing import preprocess_data as ppd
 from models import encoder as enc
 from models import sharing_generator as sh_gen
 

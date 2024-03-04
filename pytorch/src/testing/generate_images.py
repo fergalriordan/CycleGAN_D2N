@@ -9,8 +9,9 @@ import sys
 import os
 import argparse
 
+from preprocessing import preprocess_data as ppd
+
 from models import generator as gen
-from models import preprocess_data as ppd
 from models import encoder as enc
 from models import sharing_generator as sh_gen
 
