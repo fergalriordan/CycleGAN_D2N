@@ -9,20 +9,23 @@ import sys
 import os
 import argparse
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from preprocessing import preprocess_data as ppd
 
 from models import generator as gen
 from models import encoder as enc
 from models import sharing_generator as sh_gen
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
+from models import unet as un
+from models import unet_encoder as un_enc
+from models import unet_decoder as un_dec
+from models import unet_resnet18_encoder as un_res
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"using device: {DEVICE}")
 
 VAL_DIR = "../data/val"
-TEST_SIZE = 2048
+TEST_SIZE = 4096
 
 val_transforms = A.Compose(
     [
@@ -42,7 +45,7 @@ def load_checkpoint_for_testing(checkpoint_file, model):
 def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--model_type", type=str, choices=["simple", "sharing"], help="Type of generator to use: simple or sharing"
+        "--model_type", type=str, choices=["simple", "sharing", "unet", "sharing_unet", "pretrained_encoder"], help="Type of generator to use: simple, sharing, unet, sharing_unet or pretrained_encoder"
     )
     parser.add_argument(
         "--model_path", type=str, help="Path to the checkpoints"
@@ -57,7 +60,7 @@ def main():
     args = parse_arguments()
 
     model_type = args.model_type
-    if model_type not in ["simple", "sharing"]:
+    if model_type not in ["simple", "sharing", "unet", "sharing_unet", "pretrained_encoder"]:
         raise ValueError(f"Invalid model type: {model_type}")
     
     if model_type == "simple":
@@ -69,6 +72,19 @@ def main():
         gen_N = sh_gen.sharing_Generator(encoder, num_features=64, num_residuals=9, img_channels=3).to(DEVICE)
         gen_D = sh_gen.sharing_Generator(encoder, num_features=64, num_residuals=9, img_channels=3).to(DEVICE)
 
+    elif model_type == 'unet':
+        gen_N = un.UNet(input_channel=3, output_channel=3).to(DEVICE)
+        gen_D = un.UNet(input_channel=3, output_channel=3).to(DEVICE)
+
+    elif model_type == 'sharing_unet':
+        encoder = un_enc.UNet_Encoder(input_channel=3).to(DEVICE)
+        gen_N = un_dec.UNet_Decoder(encoder, output_channel=3).to(DEVICE)
+        gen_D = un_dec.UNet_Decoder(encoder, output_channel=3).to(DEVICE)
+
+    elif model_type == 'pretrained_encoder':
+        gen_N = un_res.UnetResNet18(output_channels=3).to(DEVICE)
+        gen_D = un_res.UnetResNet18(output_channels=3).to(DEVICE)
+
     model_path = args.model_path
     epoch = args.epoch
 
@@ -77,6 +93,8 @@ def main():
 
     load_checkpoint_for_testing(gen_N_checkpoint, gen_N)
     load_checkpoint_for_testing(gen_D_checkpoint, gen_D)
+
+    torch.cuda.empty_cache() # free up memory
 
     val_dataset = ppd.DayNightDataset(
         root_day=VAL_DIR + "/day",
@@ -87,6 +105,7 @@ def main():
 
     val_loader = DataLoader(
         val_dataset,
+        batch_size=1,
         shuffle=False,
         pin_memory=True,
     )
@@ -106,6 +125,8 @@ def main():
               
         save_image(fake_night*0.5+0.5, os.path.join(output_directory, f"night_{idx}.png"))
         save_image(fake_day*0.5+0.5, os.path.join(output_directory, f"day_{idx}.png"))
+
+        torch.cuda.empty_cache() # free up memory
 
 if __name__ == "__main__":
     main()
