@@ -174,12 +174,12 @@ def train_fn(
             # Mid-cycle loss: L1 loss between latent space representaion of input after 1/4 cycle and 3/4 cycle
             # Encourage the encoder to produce a common latent representatoin regardless of input image's original domain
             if encoder is not None: # passing an encoder to the training function is a flag to include a mid-cycle loss term 
-                mid_cycle_night1 = encoder(day)
-                mid_cycle_night2 = encoder(fake_night)
+                mid_cycle_night1, _, _, _, _ = encoder(day) # u-net encoder returns a tuple (to facilitate skip connections to the upsampling decoder) but only the final latent representation is wanted for mid-cycle loss
+                mid_cycle_night2, _, _, _, _ = encoder(fake_night)
                 mid_cycle_night_loss = l1(mid_cycle_night1, mid_cycle_night2) 
 
-                mid_cycle_day1 = encoder(night)
-                mid_cycle_day2 = encoder(fake_day)
+                mid_cycle_day1, _, _, _, _ = encoder(night)
+                mid_cycle_day2, _, _, _, _ = encoder(fake_day)
                 mid_cycle_day_loss = l1(mid_cycle_day1, mid_cycle_day2)
 
                 G_loss = (
@@ -408,7 +408,6 @@ def main():
             save_checkpoint(gen_N, opt_gen, filename=os.path.join(epoch_folder, f"{CHECKPOINT_GENERATOR_N}_{epoch+1+offset}.pth.tar"))
             save_checkpoint(disc_D, opt_disc, filename=os.path.join(epoch_folder, f"{CHECKPOINT_DISCRIMINATOR_D}_{epoch+1+offset}.pth.tar"))
             save_checkpoint(disc_N, opt_disc, filename=os.path.join(epoch_folder, f"{CHECKPOINT_DISCRIMINATOR_N}_{epoch+1+offset}.pth.tar"))
-
 
 if __name__ == "__main__":
     seed_everything() # make the training as reproducible as possible
