@@ -4,6 +4,49 @@ from torch.utils.data import Dataset
 import numpy as np
 import torchvision.transforms as T 
 
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+
+# Training transforms with data augmentations to artificially increase training set size
+# Dimensions depend on whether a pre-trained encoder is used (224x224) or not (256x256) and therefore size is passed as a parameter to the function
+def set_training_transforms(size):
+    transforms = A.Compose(
+        [
+            A.RandomResizedCrop(height=size, width=size, scale=(0.1, 1.0), ratio=(0.8, 1.2)),
+            A.HorizontalFlip(p=0.5),
+            A.RandomRotate90(p=0.5),  
+            A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2, p=0.3), 
+            A.OneOf([  
+                A.MotionBlur(p=0.2),
+                A.MedianBlur(blur_limit=3, p=0.1),
+                A.GaussianBlur(blur_limit=3, p=0.1),
+            ], p=0.2),
+            A.OneOf([  
+                A.OpticalDistortion(p=0.3),
+                A.GridDistortion(p=0.1),
+            ], p=0.2),
+            A.OneOf([
+                A.CLAHE(clip_limit=2),
+                A.Sharpen(),
+                A.Emboss(),
+                A.RandomBrightnessContrast(),  
+            ], p=0.3),
+            A.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], max_pixel_value=255),
+            ToTensorV2(),
+        ],
+        additional_targets={"image0": "image"}, 
+    )
+    return transforms
+
+# Validation transforms
+val_transforms = A.Compose(
+    [
+        A.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], max_pixel_value=255),
+        ToTensorV2(),
+    ],
+    additional_targets={"image0": "image"},
+)
+
 def load_image(image_path):
     with Image.open(image_path) as img:
         return np.array(img)
@@ -34,18 +77,11 @@ class DayNightDataset(Dataset):
         night_img = Image.open(night_path).convert("RGB")
         day_img = Image.open(day_path).convert("RGB")
         
+        # iresize the images (either to training size or high-res test size)
         if self.size:
-            night_img = night_img.resize((self.size, self.size), Image.ANTIALIAS)
+            night_img = night_img.resize((self.size, self.size), Image.ANTIALIAS) # Lanczos filter for resampling (my understanding is that this has been changed to 'LANCZOS' in newest PIL but Colab isn't updated yet)
             day_img = day_img.resize((self.size, self.size), Image.ANTIALIAS)
             
-
-        # Resize images to a fixed size (e.g., 256x256)
-        #night_img = night_img.resize((self.size, self.size), Image.ANTIALIAS)
-        #day_img = day_img.resize((self.size, self.size), Image.ANTIALIAS)
-        #crop = T.RandomCrop(size=(256, 256))
-        #night_img = crop(night_img)
-        #day_img = crop(day_img)
-        
         night_img = np.array(night_img)
         day_img = np.array(day_img)
 

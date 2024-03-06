@@ -2,23 +2,19 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.optim as optim
-
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
-import random, os, numpy as np
-from tqdm import tqdm
 from torchvision.utils import save_image
 from torchsummary import summary
 
-import sys
-import os
-import argparse
+import sys, argparse, random, os, numpy as np
+from tqdm import tqdm
 
+# Fix the path so the other scripts can be imported 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# Preprocessing
 from preprocessing import preprocess_data as ppd
 
-# import generator, discriminator and preprocessing files
+# Models
 from models import generator as gen
 from models import discriminator as disc
 from models import encoder as enc
@@ -27,74 +23,37 @@ from models import unet as un
 from models import unet_encoder as un_enc
 from models import unet_decoder as un_dec
 from models import unet_resnet18_encoder as un_res
+
+# Additional loss function
 import lap_pyramid_loss as lpl
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"using device: {DEVICE}")
 
+# Image directories
 TRAIN_DIR = "../data/train"
 VAL_DIR = "../data/val"
-TEST_DIR = "../data/val"
 
 # Hyperparameters
 BATCH_SIZE = 1
-LEARNING_RATE = 2e-4
 LAMBDA_CYCLE = 10
 LAMBDA_IDENTITY = 0.5 
 LAMBDA_MID = 0.5
 LAMBDA_LAPLACIAN = 0.5
-NUM_WORKERS = 2
 NUM_EPOCHS = 200
-#TRAINING_SIZE = 256
-TEST_SIZE = 1028
 
-LOAD_MODEL = False
-SAVE_MODEL = True
+# Dimensions of validation images is fixed, whereas training image dimensions depend on whether a pre-trained encoder is used (224x224) or not (256x256)
+TEST_SIZE = 1028 
+
+NUM_WORKERS = 2
 
 CHECKPOINT_INCREMENT = 5 # generate test outputs and save model checkpoints at epoch increments of this number
 
+# Checkpoint names
 CHECKPOINT_GENERATOR_D = "gen_d"
 CHECKPOINT_GENERATOR_N = "gen_n"
 CHECKPOINT_DISCRIMINATOR_D = "disc_d"
 CHECKPOINT_DISCRIMINATOR_N = "disc_n"
-
-def set_training_transforms(size):
-    transforms = A.Compose(
-        [
-            A.RandomResizedCrop(height=size, width=size, scale=(0.1, 1.0), ratio=(0.8, 1.2)),
-            A.HorizontalFlip(p=0.5),
-            A.RandomRotate90(p=0.5),  # New: Rotate images randomly by 90 degrees
-            A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2, p=0.3),  # New: Randomly change hue, saturation, etc.
-            A.OneOf([  # New: Use one of the transforms inside this list
-                A.MotionBlur(p=0.2),
-                A.MedianBlur(blur_limit=3, p=0.1),
-                A.GaussianBlur(blur_limit=3, p=0.1),
-            ], p=0.2),
-            A.OneOf([  # New: Use one of these transforms
-                A.OpticalDistortion(p=0.3),
-                A.GridDistortion(p=0.1),
-            ], p=0.2),
-            A.OneOf([  # New: Brightness/contrast adjustments
-                A.CLAHE(clip_limit=2),
-                A.Sharpen(),
-                A.Emboss(),
-                A.RandomBrightnessContrast(),  
-            ], p=0.3),
-            A.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], max_pixel_value=255),
-            ToTensorV2(),
-        ],
-        additional_targets={"image0": "image"},  # Ensure additional targets are treated as images for augmentation
-    )
-    return transforms
-
-
-val_transforms = A.Compose(
-    [
-        A.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], max_pixel_value=255),
-        ToTensorV2(),
-    ],
-    additional_targets={"image0": "image"},
-)
 
 def save_checkpoint(model, optimizer, filename="../outputs/training/checkpoints/checkpoint.pth.tar"):
     print("=> Saving checkpoint")
@@ -104,7 +63,6 @@ def save_checkpoint(model, optimizer, filename="../outputs/training/checkpoints/
     }
     torch.save(checkpoint, filename)
 
-
 def load_checkpoint(checkpoint_file, model, optimizer, lr):
     print("=> Loading checkpoint")
     checkpoint = torch.load(checkpoint_file, map_location=DEVICE)
@@ -113,7 +71,6 @@ def load_checkpoint(checkpoint_file, model, optimizer, lr):
 
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
-
 
 def seed_everything(seed=42):
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -130,58 +87,72 @@ def train_fn(
 ):
     Day_reals = 0
     Day_fakes = 0
-    loop = tqdm(loader, leave=True)
+    loop = tqdm(loader, leave=True) # progress bar
 
     for idx, (night, day) in enumerate(loop):
+        # read one batch of images from the data loader and move them to the GPU
+        # in my case, the batch size will be set to 1 in the data loader, meaning only one day image and one night image will be processed at a time
         night = night.to(DEVICE)
-        day = day.to(DEVICE)
+        day = day.to(DEVICE) 
 
-        # Train discriminators D and N
+        # Discriminator training (disc_D and disc_N)
         with torch.cuda.amp.autocast():
-            fake_day = gen_D(night)
-            D_Day_real = disc_D(day)
+            # Two discriminators are trained in parallel
+            # Process for a general discriminator disc_A is as follows:
+            # 1. Generate a fake image A_fake from real image B
+            # 2. Make predictions on real image A and fake image A_fake
+            # 3. Calculate the MSE between the prediction made for A and 1 (the correct prediction)
+            # 4. Calculate the MSE between the prediction made for A_fake and 0 (the correct prediction)
+            # 5. Sum the losses
+
+            fake_day = gen_D(night)                       
+            D_Day_real = disc_D(day) 
             D_Day_fake = disc_D(fake_day.detach())
-            Day_reals += D_Day_real.mean().item()
-            Day_fakes += D_Day_fake.mean().item()
-            D_Day_real_loss = mse(D_Day_real, torch.ones_like(D_Day_real))
-            D_Day_fake_loss = mse(D_Day_fake, torch.zeros_like(D_Day_fake))
-            D_Day_loss = D_Day_real_loss + D_Day_fake_loss
+            Day_reals += D_Day_real.mean().item() # keep track of the cumulated predictions on real day images
+            Day_fakes += D_Day_fake.mean().item() # do the same for predictions on fake day images - rolling avg printed for monitoring purposes
+            D_Day_real_loss = mse(D_Day_real, torch.ones_like(D_Day_real)) 
+            D_Day_fake_loss = mse(D_Day_fake, torch.zeros_like(D_Day_fake)) 
+            D_Day_loss = D_Day_real_loss + D_Day_fake_loss 
 
-            fake_night = gen_N(day)
-            D_Night_real = disc_N(night)
-            D_Night_fake = disc_N(fake_night.detach())
-            D_Night_real_loss = mse(D_Night_real, torch.ones_like(D_Night_real))
-            D_Night_fake_loss = mse(D_Night_fake, torch.zeros_like(D_Night_fake))
-            D_Night_loss = D_Night_real_loss + D_Night_fake_loss
+            fake_night = gen_N(day) 
+            D_Night_real = disc_N(night) 
+            D_Night_fake = disc_N(fake_night.detach()) 
+            D_Night_real_loss = mse(D_Night_real, torch.ones_like(D_Night_real)) 
+            D_Night_fake_loss = mse(D_Night_fake, torch.zeros_like(D_Night_fake)) 
+            D_Night_loss = D_Night_real_loss + D_Night_fake_loss 
 
-            D_loss = (D_Day_loss + D_Night_loss) / 2
+            D_loss = (D_Day_loss + D_Night_loss) / 2 # compute average of disc_D loss and disc_N loss for overall discriminator loss
 
-        opt_disc.zero_grad()
-        d_scaler.scale(D_loss).backward()
-        d_scaler.step(opt_disc)
-        d_scaler.update()
+        opt_disc.zero_grad() # reset the gradients of the discriminator optimizer to avoid accumulation from previous iteration
+        d_scaler.scale(D_loss).backward() # scale the loss to avoid gradient underflow during backpropagation (mixed precision training might otherwise lead to some values being set to zero)
+        d_scaler.step(opt_disc) # unscale gradients back to original values, then use them to update the discriminator weights
+        d_scaler.update() # adjust gradient scale factor for next iteration
 
-        # Train generators D and N
+        # Generator training (gen_D and gen_N)
         with torch.cuda.amp.autocast():
-            # adversarial losses
-            D_Day_fake = disc_D(fake_day)
+            # Adversarial loss terms:
+            # MSE between discriminator prediction on the fake images and an incorrect discriminator prediction
+            D_Day_fake = disc_D(fake_day) 
             D_Night_fake = disc_N(fake_night)
             loss_G_Day = mse(D_Day_fake, torch.ones_like(D_Day_fake))
             loss_G_Night = mse(D_Night_fake, torch.ones_like(D_Night_fake))
 
-            # cycle losses
+            # Cycle losses:
+            # L1 loss between the original image and the reconstructed image after a full cycle
             cycle_night = gen_N(fake_day)
             cycle_day = gen_D(fake_night)
             cycle_night_loss = l1(night, cycle_night)
             cycle_day_loss = l1(day, cycle_day)
 
-            # identity losses
+            # Identity losses
+            # L1 loss between the original image and the reconstructed image after an identity mapping 
+            # Encourage generators to make no change if an image already in their target domain is passed as an input
             identity_night = gen_N(night)
             identity_day = gen_D(day)
             identity_night_loss = l1(night, identity_night)
             identity_day_loss = l1(day, identity_day)
 
-            # calculate the basic generator loss
+            # Calculate basic generator loss (before any optional extra terms)
             G_loss = (
                     loss_G_Night
                     + loss_G_Day
@@ -190,47 +161,48 @@ def train_fn(
                     + identity_day_loss * LAMBDA_IDENTITY
                     + identity_night_loss * LAMBDA_IDENTITY
                 )
+            
+            # Optional loss term 1: Laplacian Pyramid Loss
+            if laplace:
+                laplace_pyramid_loss = lpl.LapLoss(device=DEVICE)
+                G_loss = (G_loss 
+                          + laplace_pyramid_loss(day, fake_night) * LAMBDA_LAPLACIAN
+                          + laplace_pyramid_loss(night, fake_day) * LAMBDA_LAPLACIAN
+                )
 
-
-            # if an encoder is passed to the training function (indicating a mid-cycle loss is desired), include mid-cycle loss term
-            if encoder is not None:
+            # Optional loss term 2: Mid-cycle Loss (shared encoder architecture only)
+            # Mid-cycle loss: L1 loss between latent space representaion of input after 1/4 cycle and 3/4 cycle
+            # Encourage the encoder to produce a common latent representatoin regardless of input image's original domain
+            if encoder is not None: # passing an encoder to the training function is a flag to include a mid-cycle loss term 
                 mid_cycle_night1 = encoder(day)
                 mid_cycle_night2 = encoder(fake_night)
-                mid_cycle_night_loss = l1(mid_cycle_night1, mid_cycle_night2)
+                mid_cycle_night_loss = l1(mid_cycle_night1, mid_cycle_night2) 
 
                 mid_cycle_day1 = encoder(night)
                 mid_cycle_day2 = encoder(fake_day)
                 mid_cycle_day_loss = l1(mid_cycle_day1, mid_cycle_day2)
 
-                # add the mid-cycle losses to the basic generator loss
                 G_loss = (
                     G_loss
                     + mid_cycle_night_loss * LAMBDA_MID 
                     + mid_cycle_day_loss * LAMBDA_MID
                 )
-            
-            if laplace:
-                # calculate the lap loss
-                laplace_pyramid_loss = lpl.LapLoss(device=DEVICE)
-                G_loss = (G_loss 
-                          + laplace_pyramid_loss(day, fake_night) * LAMBDA_LAPLACIAN
-                          + laplace_pyramid_loss(night, fake_day)) * LAMBDA_LAPLACIAN
-
-            
 
         opt_gen.zero_grad()
         g_scaler.scale(G_loss).backward()
         g_scaler.step(opt_gen)
         g_scaler.update()
 
+        # Every 100 images, save a low-res snapshot (for monitoring purposes)
         if idx % 100 == 0:
             save_image(fake_day * 0.5 + 0.5, f"../outputs/training/snapshots/day_{idx}.png")
             save_image(fake_night * 0.5 + 0.5, f"../outputs/training/snapshots/night_{idx}.png")
 
+        # print rolling average of predictions on real and fake day images for monitoring purposes
+        # (if D_real approaches 1 and D_fake approaches 0, the discriminator is outperforming the generator)
         loop.set_postfix(D_real=Day_reals / (idx + 1), D_fake=Day_fakes / (idx + 1))
 
-
-    # Validation phase after each epoch
+    # Validation phase after each epoch (only performed if current epoch is divisible by the CHECKPOINT_INCREMENT)
     if epoch % CHECKPOINT_INCREMENT == 0:
       gen_N.eval()
       gen_D.eval()
@@ -253,58 +225,55 @@ def train_fn(
               save_image(val_fake_night * 0.5 + 0.5, os.path.join(output_directory, f"night_{val_idx}.png"))
               
 def parse_arguments():
+
     parser = argparse.ArgumentParser(description='Training Script')
+
     parser.add_argument('--generator_type', type=str, choices=['simple', 'sharing', 'unet', 'sharing_unet', 'pretrained_encoder'], default='simple',
                         help='Type of generator to use: simple, sharing, unet, sharing_unet or pretrained_encoder (default: simple)')
-    parser.add_argument('--mid_cycle_loss', type=str, choices=['y', 'n'], default='n',
-                        help='Include a mid-cycle loss term to constrain the representations generated by the shared encoder: y or n')
-    parser.add_argument('--lap_loss', type=str, choices=['y', 'n'], default='n',
-                        help='Include a laplacian pyramid loss term: y or n')
     parser.add_argument('--load_model', type=str, default='n',
-                        help='Path to a folder containing model checkpoints to load a pretrained model, e.g. "../outputs/training/checkpoints/epoch_200/" (default: n)')
+                        help='Path to a checkpoint folder, e.g. "../outputs/training/checkpoints/epoch_200/" (default: n)')
     parser.add_argument('--loaded_epoch', type=str, default='n',
-                        help='Epoch of a pretrained model to load (default: n)')
-    parser.add_argument('--learning_rate', type=float, default=2e-4, 
-                        help='Learning rate to use for training (default: 2e-4)')
+                        help='Number of epochs of training that have already been performed for the loaded model (default: n)')
+    parser.add_argument('--disc_learning_rate', type=float, default=2e-4, 
+                        help='Discriminator learning rate (default: 2e-4)')
+    parser.add_argument('--gen_learning_rate', type=float, default=2e-4, 
+                        help='Generator learning rate (default: 2e-4)')
+    parser.add_argument('--lap_loss', type=str, choices=['y', 'n'], default='n',
+                        help='Include a Laplacian Pyramid loss term: y or n')
+    parser.add_argument('--mid_cycle_loss', type=str, choices=['y', 'n'], default='n',
+                        help='Include a mid-cycle loss term to encourage a common latent representation (only applicable for shared encoder architecture): y or n')
+    
     return parser.parse_args()
 
 def main():
     
     args = parse_arguments()
-    
-    generator_type = args.generator_type
-    mid_cycle_loss = args.mid_cycle_loss
-    load_model = args.load_model
-    loaded_epoch = args.loaded_epoch
-    learning_rate = args.learning_rate
 
-    lap_loss = args.lap_loss
-    laplace = False
-    if lap_loss == 'y':
-        laplace = True
-    
-    discriminator_lr_divisor=1
+    training_image_size = 256
 
-    if generator_type == 'simple':
+    if args.generator_type == 'simple':
         disc_D = disc.Discriminator(in_channels=3).to(DEVICE)
         disc_N = disc.Discriminator(in_channels=3).to(DEVICE)
         gen_N = gen.Generator(img_channels=3, num_residuals=9).to(DEVICE)
         gen_D = gen.Generator(img_channels=3, num_residuals=9).to(DEVICE)
         summary(gen_N, (3, 256, 256), device=DEVICE)
-    elif generator_type == 'sharing':
+
+    elif args.generator_type == 'sharing':
         disc_D = disc.Discriminator(in_channels=3).to(DEVICE)
         disc_N = disc.Discriminator(in_channels=3).to(DEVICE)
         encoder = enc.Encoder(img_channels=3, num_features=64).to(DEVICE)
         gen_N = sh_gen.sharing_Generator(encoder, num_features=64, num_residuals=9, img_channels=3).to(DEVICE)
         gen_D = sh_gen.sharing_Generator(encoder, num_features=64, num_residuals=9, img_channels=3).to(DEVICE)
         summary(gen_N, (3, 256, 256), device=DEVICE)
-    elif generator_type == 'unet':
+
+    elif args.generator_type == 'unet':
         disc_D = disc.Discriminator(in_channels=3).to(DEVICE)
         disc_N = disc.Discriminator(in_channels=3).to(DEVICE)
         gen_N = un.UNet(input_channel=3, output_channel=3).to(DEVICE)
         gen_D = un.UNet(input_channel=3, output_channel=3).to(DEVICE)
         summary(gen_N, (3, 256, 256), device=DEVICE)
-    elif generator_type == 'sharing_unet':
+
+    elif args.generator_type == 'sharing_unet':
         disc_D = disc.Discriminator(in_channels=3).to(DEVICE)
         disc_N = disc.Discriminator(in_channels=3).to(DEVICE)
         encoder = un_enc.UNet_Encoder(input_channel=3).to(DEVICE)
@@ -312,96 +281,61 @@ def main():
         gen_D = un_dec.UNet_Decoder(encoder, output_channel=3).to(DEVICE)
         summary(encoder, (3, 256, 256), device=DEVICE)
         summary(gen_N, (3, 256, 256), device=DEVICE)
-    elif generator_type == 'pretrained_encoder':
+
+    elif args.generator_type == 'pretrained_encoder':
         disc_D = disc.Discriminator(in_channels=3).to(DEVICE)
         disc_N = disc.Discriminator(in_channels=3).to(DEVICE)
         gen_N = un_res.UnetResNet18(output_channels=3).to(DEVICE)
         gen_D = un_res.UnetResNet18(output_channels=3).to(DEVICE)
+        training_image_size = 224 # keep size consistent with the training data of Resnet-18
         summary (disc_N, (3, 224, 224), device=DEVICE)
         summary(gen_N, (3, 224, 224), device=DEVICE)
-        discriminator_lr_divisor = 1
 
     # use Adam Optimizer for both generator and discriminator
     opt_disc = optim.Adam(
-        list(disc_D.parameters()) + list(disc_N.parameters()),
-        lr=learning_rate/discriminator_lr_divisor, # use smaller learning rate for discriminator
-        betas=(0.5, 0.999),
+        list(disc_D.parameters()) + list(disc_N.parameters()), lr=args.disc_learning_rate, betas=(0.5, 0.999),
     )
 
     opt_gen = optim.Adam(
-        list(gen_N.parameters()) + list(gen_D.parameters()),
-        lr=learning_rate,
-        betas=(0.5, 0.999),
+        list(gen_N.parameters()) + list(gen_D.parameters()), lr=args.gen_learning_rate, betas=(0.5, 0.999),
     )
 
     L1 = nn.L1Loss()
     mse = nn.MSELoss()
 
-    load_model = args.load_model
-    loaded_epoch = args.loaded_epoch
-    if load_model != 'n' and loaded_epoch == 'n':
-        print("Invalid model loading arguments. You must specify the epoch of the model to load (e.g. --load_model=\"../outputs/training/checkpoints/epoch_200/\" --loaded_epoch=200).")
+    offset = 0 # no epoch offset if no loaded model (training from scratch), otherwise the loaded epoch must be added to the current epoch
+
+    if args.load_model != 'n' and args.loaded_epoch == 'n':
+        print("Invalid model loading arguments. You must specify the current epoch of the loaded checkpoint.")
         return
+
+    if args.load_model != 'n':
+        offset = int(args.loaded_epoch)
+
+        gen_D_checkpoint = args.load_model + f"{CHECKPOINT_GENERATOR_D}_{args.loaded_epoch}.pth.tar"
+        gen_N_checkpoint = args.load_model + f"{CHECKPOINT_GENERATOR_N}_{args.loaded_epoch}.pth.tar"
+        disc_D_checkpoint = args.load_model + f"{CHECKPOINT_DISCRIMINATOR_D}_{args.loaded_epoch}.pth.tar"
+        disc_N_checkpoint = args.load_model + f"{CHECKPOINT_DISCRIMINATOR_N}_{args.loaded_epoch}.pth.tar"
+
+        load_checkpoint(gen_D_checkpoint, gen_D, opt_gen, args.gen_learning_rate)
+        load_checkpoint(gen_N_checkpoint, gen_N, opt_gen, args.gen_learning_rate)
+        load_checkpoint(disc_D_checkpoint, disc_D, opt_disc, args.disc_learning_rate)
+        load_checkpoint(disc_N_checkpoint, disc_N, opt_disc, args.disc_learning_rate)
     
-    E = 0 # variable for naming of checkpoints - will be zero if no loaded model (therefore checkpoints will start from epoch_0), otherwise, the loaded epoch is added
-
-    if load_model != 'n':
-        # load the checkpoints stored at the given directory
-
-        E = int(loaded_epoch)
-
-        gen_D_checkpoint = load_model + f"{CHECKPOINT_GENERATOR_D}_{loaded_epoch}.pth.tar"
-        gen_N_checkpoint = load_model + f"{CHECKPOINT_GENERATOR_N}_{loaded_epoch}.pth.tar"
-        disc_D_checkpoint = load_model + f"{CHECKPOINT_DISCRIMINATOR_D}_{loaded_epoch}.pth.tar"
-        disc_N_checkpoint = load_model + f"{CHECKPOINT_DISCRIMINATOR_N}_{loaded_epoch}.pth.tar"
-
-        load_checkpoint(
-            gen_D_checkpoint,
-            gen_D,
-            opt_gen,
-            learning_rate,
-        )
-        load_checkpoint(
-            gen_N_checkpoint,
-            gen_N,
-            opt_gen,
-            learning_rate,
-        )
-        load_checkpoint(
-            disc_D_checkpoint,
-            disc_D,
-            opt_disc,
-            learning_rate,
-        )
-        load_checkpoint(
-            disc_N_checkpoint,
-            disc_N,
-            opt_disc,
-            learning_rate,
-        )
-
-    # TODO: if using pretrained encoder, training size is 224, otherwise 256
-    
-    if generator_type == 'pretrained_encoder':
-        training_image_size = 224
-        transforms = set_training_transforms(training_image_size)
-    
-    else:
-        training_image_size = 256
-        transforms = set_training_transforms(training_image_size)
+    transforms = ppd.set_training_transforms(training_image_size)
 
     dataset = ppd.DayNightDataset(
         root_day=TRAIN_DIR + "/day",
         root_night=TRAIN_DIR + "/night",
-        #size=TRAINING_SIZE,
         size=training_image_size,
         transform=transforms,
     )
+
     val_dataset = ppd.DayNightDataset(
         root_day=VAL_DIR + "/day",
         root_night=VAL_DIR + "/night",
         size=TEST_SIZE,
-        transform=val_transforms,
+        transform=ppd.val_transforms,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -419,10 +353,14 @@ def main():
     g_scaler = torch.cuda.amp.GradScaler()
     d_scaler = torch.cuda.amp.GradScaler()
 
+    laplace = False
+    if args.lap_loss == 'y':
+        laplace = True
+
     for epoch in range(NUM_EPOCHS):
         print('Epoch: ', (epoch+1), '/', NUM_EPOCHS)
 
-        if mid_cycle_loss == 'n':
+        if args.mid_cycle_loss == 'n':
             train_fn(
                 disc_D,
                 disc_N,
@@ -440,7 +378,7 @@ def main():
                 laplace
             )
         
-        elif mid_cycle_loss == 'y':
+        elif args.mid_cycle_loss == 'y':
             train_fn(
                 disc_D,
                 disc_N,
@@ -459,18 +397,19 @@ def main():
                 encoder
             )
             
-        if SAVE_MODEL and (epoch+1) % CHECKPOINT_INCREMENT == 0:
-            epoch_folder = f"../outputs/training/checkpoints/epoch_{epoch+1}/"
+        if (epoch+1) % CHECKPOINT_INCREMENT == 0:
+            epoch_folder = f"../outputs/training/checkpoints/epoch_{epoch+1+offset}/"
 
             if not os.path.exists(epoch_folder):
                 os.makedirs(epoch_folder)
 
             # checkpoints start from epoch 0 unless a model was loaded, in which case the loaded epoch (E) is added to the name (epoch_10 becomes epoch_210 if we loaded epoch_200 checkpoints) 
-            save_checkpoint(gen_D, opt_gen, filename=os.path.join(epoch_folder, f"{CHECKPOINT_GENERATOR_D}_{epoch+1+E}.pth.tar"))
-            save_checkpoint(gen_N, opt_gen, filename=os.path.join(epoch_folder, f"{CHECKPOINT_GENERATOR_N}_{epoch+1+E}.pth.tar"))
-            save_checkpoint(disc_D, opt_disc, filename=os.path.join(epoch_folder, f"{CHECKPOINT_DISCRIMINATOR_D}_{epoch+1+E}.pth.tar"))
-            save_checkpoint(disc_N, opt_disc, filename=os.path.join(epoch_folder, f"{CHECKPOINT_DISCRIMINATOR_N}_{epoch+1+E}.pth.tar"))
+            save_checkpoint(gen_D, opt_gen, filename=os.path.join(epoch_folder, f"{CHECKPOINT_GENERATOR_D}_{epoch+1+offset}.pth.tar"))
+            save_checkpoint(gen_N, opt_gen, filename=os.path.join(epoch_folder, f"{CHECKPOINT_GENERATOR_N}_{epoch+1+offset}.pth.tar"))
+            save_checkpoint(disc_D, opt_disc, filename=os.path.join(epoch_folder, f"{CHECKPOINT_DISCRIMINATOR_D}_{epoch+1+offset}.pth.tar"))
+            save_checkpoint(disc_N, opt_disc, filename=os.path.join(epoch_folder, f"{CHECKPOINT_DISCRIMINATOR_N}_{epoch+1+offset}.pth.tar"))
 
 
 if __name__ == "__main__":
+    seed_everything() # make the training as reproducible as possible
     main()
