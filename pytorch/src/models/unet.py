@@ -1,5 +1,3 @@
-# good learning rate for this model is 0.001
-
 import torch
 from torch.autograd import Variable
 

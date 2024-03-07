@@ -24,7 +24,6 @@ class ConvBlock(torch.nn.Module):
 
         return x
 
-
 class CropConcat(torch.nn.Module):
     def __init__(self, crop=True):
         super(CropConcat, self).__init__()
