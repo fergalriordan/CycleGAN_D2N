@@ -25,12 +25,27 @@ print(f"using device: {DEVICE}")
 # Image directories
 TRAIN_DIR = "../data/train"
 VAL_DIR = "../data/val"
+TIMELAPSE_TRAIN_DIR = "../data/timelapse_training_data"
+TIMELAPSE_VAL_DIR = "../data/timelapse_val_data"
 
 # Hyperparameters
 BATCH_SIZE = 1
 LAMBDA_CYCLE = 10
 LAMBDA_IDENTITY = 0.5 
-NUM_EPOCHS = 200
+
+NUM_EPOCHS_MAIN_TRAINING = 50 # day <=> night (big dataset)
+TRAINING_CONFIG = [ # configurations for timelapse traiingin
+    (3, 0.0, 1.0), 
+    (3, 0.0, 0.5), 
+    (3, 0.5, 1.0),
+    (3, 0.0, 1.0),
+    (3, 0.0, 0.5),
+    (3, 0.5, 1.0),
+    (3, 0.0, 1.0),
+    (3, 0.0, 0.5),
+    (3, 0.5, 1.0),
+    (3, 0.0, 1.0)
+    ]
 
 # Dimensions of validation images is fixed, whereas training image dimensions depend on whether a pre-trained encoder is used (224x224) or not (256x256)
 TEST_SIZE = 1028 
@@ -41,8 +56,11 @@ CHECKPOINT_INCREMENT = 5 # generate test outputs and save model checkpoints at e
 
 # Checkpoint names
 CHECKPOINT_GENERATOR = "gen"
-CHECKPOINT_DISCRIMINATOR_D = "disc_d"
-CHECKPOINT_DISCRIMINATOR_N = "disc_n"
+CHECKPOINT_DISCRIMINATOR_D = "disc_0"
+CHECKPOINT_DISCRIMINATOR_N = "disc_100"
+CHECKPOINT_DISCRIMINATOR_DUSK = "disc_50"
+CHECKPOINT_DISCRIMINATOR_LATE_DUSK = "disc_75"
+CHECKPOINT_DISCRIMINATOR_EARLY_DUSK = "disc_25"
 
 def save_checkpoint(model, optimizer, filename="../outputs/training/checkpoints/checkpoint.pth.tar"):
     print("=> Saving checkpoint")
@@ -71,15 +89,45 @@ def seed_everything(seed=42):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+def get_loaders(train_dir1, train_dir2, val_dir1, val_dir2, training_image_size, validation_image_size, transforms, batch_size, num_workers):
+
+    dataset = ppd.DayNightDataset(
+        root_day=train_dir1,
+        root_night=train_dir2,
+        size=training_image_size,
+        transform=transforms,
+    )
+    val_dataset = ppd.DayNightDataset(
+        root_day=val_dir1,
+        root_night=val_dir2,
+        size=validation_image_size,
+        transform=ppd.val_transforms,
+    )
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        pin_memory=True,
+    )
+
+    return loader, val_loader
+
 def train_fn(
-    disc_D, disc_N, gen, loader, val_loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, epoch
+    disc_D, disc_N, gen, timestamp0, timestamp1, loader, val_loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, epoch
 ):
     Day_reals = 0
     Day_fakes = 0
     loop = tqdm(loader, leave=True) # progress bar
 
-    day_timestamp = torch.tensor([0.0], device=DEVICE).float()  # 0 = day
-    night_timestamp = torch.tensor([1.0], device=DEVICE).float() # 1 = night
+    day_timestamp = torch.tensor([timestamp0], device=DEVICE).float()  # 0 = day
+    night_timestamp = torch.tensor([timestamp1], device=DEVICE).float() # 1 = night
 
     for idx, (night, day) in enumerate(loop):
         # read one batch of images from the data loader and move them to the GPU
@@ -175,10 +223,21 @@ def train_fn(
           for val_idx, (val_night, val_day) in enumerate(val_loader):
               val_night = val_night.to(DEVICE)
               val_day = val_day.to(DEVICE)
+              
+              timestamp0 = torch.tensor([0.0], device=DEVICE).float()  
+              timestamp50 = torch.tensor([0.5], device=DEVICE).float() 
+              timestamp100 = torch.tensor([1.0], device=DEVICE).float()
 
               # Generate images using generators
-              val_fake_day = gen(val_night, day_timestamp)
-              val_fake_night = gen(val_day, night_timestamp)
+              val_0_from_0 = gen(val_day, timestamp0)
+              val_50_from_0 = gen(val_day, timestamp50)
+              val_100_from_0 = gen(val_day, timestamp100)
+
+              val_100_from_100 = gen(val_night, timestamp100)
+              val_50_from_100 = gen(val_night, timestamp50)
+              val_0_from_100 = gen(val_night, timestamp0)
+              #val_fake_day = gen(val_night, day_timestamp)
+              #val_fake_night = gen(val_day, night_timestamp)
 
               output_directory = f"../outputs/training/outputs/epoch_{epoch}/"
 
@@ -186,8 +245,12 @@ def train_fn(
                 os.makedirs(output_directory)
               
               # Save the images
-              save_image(val_fake_day * 0.5 + 0.5, os.path.join(output_directory, f"day_{val_idx}.png"))
-              save_image(val_fake_night * 0.5 + 0.5, os.path.join(output_directory, f"night_{val_idx}.png"))
+              save_image(val_0_from_0 * 0.5 + 0.5, os.path.join(output_directory, f"day-to-day_{val_idx}.png"))
+              save_image(val_50_from_0 * 0.5 + 0.5, os.path.join(output_directory, f"day-to-dusk_{val_idx}.png"))
+              save_image(val_100_from_0 * 0.5 + 0.5, os.path.join(output_directory, f"day-to-night_{val_idx}.png"))
+              save_image(val_100_from_100 * 0.5 + 0.5, os.path.join(output_directory, f"night-to-night_{val_idx}.png"))
+              save_image(val_50_from_100 * 0.5 + 0.5, os.path.join(output_directory, f"night-to-dusk_{val_idx}.png"))
+              save_image(val_0_from_100 * 0.5 + 0.5, os.path.join(output_directory, f"night-to-day_{val_idx}.png"))
               
 def parse_arguments():
 
@@ -210,11 +273,15 @@ def main():
 
     training_image_size = 256
 
-    disc_D = disc.Discriminator(in_channels=3).to(DEVICE)
+    disc_D = disc.Discriminator(in_channels=3).to(DEVICE) 
     disc_N = disc.Discriminator(in_channels=3).to(DEVICE)
     encoder = un_enc.UNet_Encoder(input_channel=3).to(DEVICE)
     gen = time_un_dec.Timestamped_UNet_Decoder(encoder, 512, 3).to(DEVICE)
-    #summary(gen, (3, training_image_size, training_image_size), device=DEVICE)
+
+    # extra discriminators for timelapse training
+    disc_Dusk = disc.Discriminator(in_channels=3).to(DEVICE)
+    #disc_Early_Dusk = disc.Discriminator(in_channels=3).to(DEVICE)
+    #disc_Late_Dusk = disc.Discriminator(in_channels=3).to(DEVICE)
 
     # use Adam Optimizer for both generator and discriminator
     opt_disc = optim.Adam(
@@ -247,44 +314,74 @@ def main():
     
     transforms = ppd.set_training_transforms(training_image_size)
 
-    dataset = ppd.DayNightDataset(
-        root_day=TRAIN_DIR + "/day",
-        root_night=TRAIN_DIR + "/night",
-        size=training_image_size,
-        transform=transforms,
+    loader0, val_loader0 = get_loaders(
+        TRAIN_DIR + "/day", 
+        TRAIN_DIR + "/night", 
+        VAL_DIR + "/day", 
+        VAL_DIR + "/night", 
+        training_image_size,
+        TEST_SIZE, 
+        transforms, 
+        BATCH_SIZE, 
+        NUM_WORKERS
     )
 
-    val_dataset = ppd.DayNightDataset(
-        root_day=VAL_DIR + "/day",
-        root_night=VAL_DIR + "/night",
-        size=TEST_SIZE,
-        transform=ppd.val_transforms,
+    loader1, val_loader1 = get_loaders(
+        TIMELAPSE_TRAIN_DIR + "/time_0",
+        TIMELAPSE_TRAIN_DIR + "/time_100",
+        TIMELAPSE_VAL_DIR + "/time_0",
+        TIMELAPSE_VAL_DIR + "/time_100",
+        training_image_size,
+        TEST_SIZE,
+        transforms,
+        BATCH_SIZE,
+        NUM_WORKERS
     )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        pin_memory=True,
+
+    loader2, val_loader2 = get_loaders(
+        TIMELAPSE_TRAIN_DIR + "/time_0",
+        TIMELAPSE_TRAIN_DIR + "/time_50",
+        TIMELAPSE_VAL_DIR + "/time_0",
+        TIMELAPSE_VAL_DIR + "/time_50",
+        training_image_size,
+        TEST_SIZE,
+        transforms,
+        BATCH_SIZE,
+        NUM_WORKERS
     )
-    loader = DataLoader(
-        dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        num_workers=NUM_WORKERS,
-        pin_memory=True,
+
+    loader3, val_loader3 = get_loaders(
+        TIMELAPSE_TRAIN_DIR + "/time_50",
+        TIMELAPSE_TRAIN_DIR + "/time_100",
+        TIMELAPSE_VAL_DIR + "/time_50",
+        TIMELAPSE_VAL_DIR + "/time_100",
+        training_image_size,
+        TEST_SIZE,
+        transforms,
+        BATCH_SIZE,
+        NUM_WORKERS
     )
+
     g_scaler = torch.cuda.amp.GradScaler()
     d_scaler = torch.cuda.amp.GradScaler()
 
-    for epoch in range(NUM_EPOCHS):
-        print('Epoch: ', (epoch+1), '/', NUM_EPOCHS)
+    # Primary Training
+    print("STARTING MAIN TRAINING LOOP...")
+
+    for epoch in range(NUM_EPOCHS_MAIN_TRAINING):
+        print('Epoch: ', (epoch+1), '/', NUM_EPOCHS_MAIN_TRAINING)
+
+        timestamp0 = 0.0
+        timestamp1 = 1.0
 
         train_fn(
             disc_D,
             disc_N,
             gen,
-            loader,
-            val_loader,
+            timestamp0,
+            timestamp1,
+            loader0,
+            val_loader0,
             opt_disc,
             opt_gen,
             L1,
@@ -300,11 +397,67 @@ def main():
             if not os.path.exists(epoch_folder):
                 os.makedirs(epoch_folder)
 
-            # checkpoints start from epoch 0 unless a model was loaded, in which case the loaded epoch (E) is added to the name (epoch_10 becomes epoch_210 if we loaded epoch_200 checkpoints) 
             save_checkpoint(gen, opt_gen, filename=os.path.join(epoch_folder, f"{CHECKPOINT_GENERATOR}_{epoch+1+offset}.pth.tar"))
             save_checkpoint(disc_D, opt_disc, filename=os.path.join(epoch_folder, f"{CHECKPOINT_DISCRIMINATOR_D}_{epoch+1+offset}.pth.tar"))
             save_checkpoint(disc_N, opt_disc, filename=os.path.join(epoch_folder, f"{CHECKPOINT_DISCRIMINATOR_N}_{epoch+1+offset}.pth.tar"))
+    
+    offset += NUM_EPOCHS_MAIN_TRAINING
+
+    # Timelapse Training
+    print("STARTING TIMELAPSE TRAINING...")
+
+    for phase, (num_epochs, timestamp0, timestamp1) in enumerate(TRAINING_CONFIG, start=1):
+        print('Phase: ', phase, '/', len(TRAINING_CONFIG))
+        print(timestamp0, '<=>', timestamp1)
+
+        if timestamp0 == 0.0 and timestamp1 == 1.0:
+            loader, val_loader = loader1, val_loader1
+            disc_x, disc_y = disc_D, disc_N
+            disc_x_checkpoint_name, disc_y_checkpoint_name = CHECKPOINT_DISCRIMINATOR_D, CHECKPOINT_DISCRIMINATOR_N
+        elif timestamp0 == 0.0 and timestamp1 == 0.5:
+            loader, val_loader = loader2, val_loader2
+            disc_x, disc_y = disc_D, disc_Dusk
+            disc_x_checkpoint_name, disc_y_checkpoint_name = CHECKPOINT_DISCRIMINATOR_D, CHECKPOINT_DISCRIMINATOR_DUSK
+        elif timestamp0 == 0.5 and timestamp1 == 1.0:
+            loader, val_loader = loader3, val_loader3
+            disc_x, disc_y = disc_Dusk, disc_N
+            disc_x_checkpoint_name, disc_y_checkpoint_name = CHECKPOINT_DISCRIMINATOR_DUSK, CHECKPOINT_DISCRIMINATOR_N
+        else : 
+            raise ValueError("Invalid timestamp configuration")
+        
+        for epoch in range(num_epochs):
+            print('Epoch: ', (epoch+1), '/', num_epochs)
+
+            train_fn(
+                disc_x,
+                disc_y,
+                gen,
+                timestamp0,
+                timestamp1,
+                loader,
+                val_loader,
+                opt_disc,
+                opt_gen,
+                L1,
+                mse,
+                d_scaler,
+                g_scaler,
+                (epoch+1+offset)
+            )
+
+            if (epoch+1) % CHECKPOINT_INCREMENT == 0:
+                epoch_folder = f"../outputs/training/checkpoints/epoch_{epoch+1+offset}/"
+
+                if not os.path.exists(epoch_folder):
+                    os.makedirs(epoch_folder)
+                
+                save_checkpoint(gen, opt_gen, filename=os.path.join(epoch_folder, f"{CHECKPOINT_GENERATOR}_{epoch+1+offset}.pth.tar"))
+                save_checkpoint(disc_x, opt_disc, filename=os.path.join(epoch_folder, f"{disc_x_checkpoint_name}_{epoch+1+offset}.pth.tar"))
+                save_checkpoint(disc_y, opt_disc, filename=os.path.join(epoch_folder, f"{disc_y_checkpoint_name}_{epoch+1+offset}.pth.tar"))
+        
+        offset += num_epochs
+
 
 if __name__ == "__main__":
-    seed_everything() # make the training as reproducible as possible
+    seed_everything(seed=123) # make the training as reproducible as possible
     main()
