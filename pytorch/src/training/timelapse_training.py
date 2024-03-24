@@ -89,19 +89,23 @@ def seed_everything(seed=42):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def get_loaders(train_dir1, train_dir2, val_dir1, val_dir2, training_image_size, validation_image_size, transforms, batch_size, num_workers):
+def get_loaders(train_dir1, train_dir2, val_dir1, val_dir2, training_image_size, validation_image_size, batch_size, num_workers, day_training_transforms, night_training_transforms, day_val_transforms, night_val_transforms):
 
     dataset = ppd.DayNightDataset(
         root_day=train_dir1,
         root_night=train_dir2,
         size=training_image_size,
-        transform=transforms,
+        #transform=transforms,
+        day_transform=day_training_transforms,
+        night_transform=night_training_transforms,
     )
     val_dataset = ppd.DayNightDataset(
         root_day=val_dir1,
         root_night=val_dir2,
         size=validation_image_size,
-        transform=ppd.val_transforms,
+        #transform=ppd.val_transforms,
+        day_transform=day_val_transforms,
+        night_transform=night_val_transforms,
     )
     loader = DataLoader(
         dataset,
@@ -311,8 +315,19 @@ def main():
         load_checkpoint(gen_checkpoint, gen, opt_gen, args.gen_learning_rate)
         load_checkpoint(disc_D_checkpoint, disc_D, opt_disc, args.disc_learning_rate)
         load_checkpoint(disc_N_checkpoint, disc_N, opt_disc, args.disc_learning_rate)
+
+    day_means = [0.5, 0.5, 0.5]
+    day_stds = [0.5, 0.5, 0.5]
+    night_means = [0.5, 0.5, 0.5]
+    night_stds = [0.5, 0.5, 0.5]
     
-    transforms = ppd.set_training_transforms(training_image_size)
+    #transforms = ppd.set_training_transforms(training_image_size, )
+
+    day_training_transforms = ppd.set_training_transforms(training_image_size, day_means, day_stds)
+    night_training_transforms = ppd.set_training_transforms(training_image_size, night_means, night_stds)
+    day_val_transforms = ppd.set_val_transforms(day_means, day_stds)
+    night_val_transforms = ppd.set_val_transforms(night_means, night_stds)
+
 
     loader0, val_loader0 = get_loaders(
         TRAIN_DIR + "/day", 
@@ -321,9 +336,13 @@ def main():
         VAL_DIR + "/night", 
         training_image_size,
         TEST_SIZE, 
-        transforms, 
+        #transforms, 
         BATCH_SIZE, 
-        NUM_WORKERS
+        NUM_WORKERS,
+        day_training_transforms,
+        night_training_transforms,
+        day_val_transforms,
+        night_val_transforms
     )
 
     loader1, val_loader1 = get_loaders(
@@ -333,33 +352,45 @@ def main():
         TIMELAPSE_VAL_DIR + "/time_100",
         training_image_size,
         TEST_SIZE,
-        transforms,
+        #transforms,
         BATCH_SIZE,
-        NUM_WORKERS
+        NUM_WORKERS,
+        day_training_transforms,
+        night_training_transforms,
+        day_val_transforms,
+        night_val_transforms
     )
 
     loader2, val_loader2 = get_loaders(
         TIMELAPSE_TRAIN_DIR + "/time_0",
         TIMELAPSE_TRAIN_DIR + "/time_50",
         TIMELAPSE_VAL_DIR + "/time_0",
-        TIMELAPSE_VAL_DIR + "/time_50",
+        TIMELAPSE_VAL_DIR + "/time_100",
         training_image_size,
         TEST_SIZE,
-        transforms,
+        #transforms,
         BATCH_SIZE,
-        NUM_WORKERS
+        NUM_WORKERS,
+        day_training_transforms,
+        night_training_transforms,
+        day_val_transforms,
+        night_val_transforms
     )
 
     loader3, val_loader3 = get_loaders(
         TIMELAPSE_TRAIN_DIR + "/time_50",
         TIMELAPSE_TRAIN_DIR + "/time_100",
-        TIMELAPSE_VAL_DIR + "/time_50",
+        TIMELAPSE_VAL_DIR + "/time_0",
         TIMELAPSE_VAL_DIR + "/time_100",
         training_image_size,
         TEST_SIZE,
-        transforms,
+        #transforms,
         BATCH_SIZE,
-        NUM_WORKERS
+        NUM_WORKERS,
+        day_training_transforms,
+        night_training_transforms,
+        day_val_transforms,
+        night_val_transforms
     )
 
     g_scaler = torch.cuda.amp.GradScaler()

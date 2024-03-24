@@ -40,14 +40,20 @@ LAMBDA_CYCLE = 10
 LAMBDA_IDENTITY = 0.5 
 LAMBDA_MID = 0.5
 LAMBDA_LAPLACIAN = 0.5
-NUM_EPOCHS = 200
+NUM_EPOCHS = 100
+
+# Mean and standard deviation of day and night images
+day_means = [0.5, 0.5, 0.5]
+night_means = [0.5, 0.5, 0.5]
+day_stds = [0.5, 0.5, 0.5]
+night_stds = [0.5, 0.5, 0.5]
 
 # Dimensions of validation images is fixed, whereas training image dimensions depend on whether a pre-trained encoder is used (224x224) or not (256x256)
 TEST_SIZE = 1028 
 
 NUM_WORKERS = 2
 
-CHECKPOINT_INCREMENT = 5 # generate test outputs and save model checkpoints at epoch increments of this number
+CHECKPOINT_INCREMENT = 1 # generate test outputs and save model checkpoints at epoch increments of this number
 
 # Checkpoint names
 CHECKPOINT_GENERATOR_D = "gen_d"
@@ -242,7 +248,7 @@ def parse_arguments():
                         help='Include a Laplacian Pyramid loss term: y or n')
     parser.add_argument('--mid_cycle_loss', type=str, choices=['y', 'n'], default='n',
                         help='Include a mid-cycle loss term to encourage a common latent representation (only applicable for shared encoder architecture): y or n')
-    
+
     return parser.parse_args()
 
 def main():
@@ -288,6 +294,7 @@ def main():
         gen_N = un_res.UnetResNet18(output_channels=3).to(DEVICE)
         gen_D = un_res.UnetResNet18(output_channels=3).to(DEVICE)
         training_image_size = 224 # keep size consistent with the training data of Resnet-18
+        print(gen_N.base_model)
         summary (disc_N, (3, 224, 224), device=DEVICE)
         summary(gen_N, (3, 224, 224), device=DEVICE)
 
@@ -322,20 +329,27 @@ def main():
         load_checkpoint(disc_D_checkpoint, disc_D, opt_disc, args.disc_learning_rate)
         load_checkpoint(disc_N_checkpoint, disc_N, opt_disc, args.disc_learning_rate)
     
-    transforms = ppd.set_training_transforms(training_image_size)
+    day_training_transforms = ppd.set_training_transforms(training_image_size, day_means, day_stds)
+    night_training_transforms = ppd.set_training_transforms(training_image_size, night_means, night_stds)
+    day_val_transforms = ppd.set_val_transforms(day_means, day_stds)
+    night_val_transforms = ppd.set_val_transforms(night_means, night_stds)
 
     dataset = ppd.DayNightDataset(
         root_day=TRAIN_DIR + "/day",
         root_night=TRAIN_DIR + "/night",
         size=training_image_size,
-        transform=transforms,
+        #transform=transforms,
+        day_transform=day_training_transforms,
+        night_transform=night_training_transforms,
     )
 
     val_dataset = ppd.DayNightDataset(
         root_day=VAL_DIR + "/day",
         root_night=VAL_DIR + "/night",
         size=TEST_SIZE,
-        transform=ppd.val_transforms,
+        #transform=ppd.val_transforms,
+        day_transform=day_val_transforms,
+        night_transform=night_val_transforms,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -410,5 +424,5 @@ def main():
             save_checkpoint(disc_N, opt_disc, filename=os.path.join(epoch_folder, f"{CHECKPOINT_DISCRIMINATOR_N}_{epoch+1+offset}.pth.tar"))
 
 if __name__ == "__main__":
-    seed_everything() # make the training as reproducible as possible
+    seed_everything(100) # make the training as reproducible as possible
     main()
