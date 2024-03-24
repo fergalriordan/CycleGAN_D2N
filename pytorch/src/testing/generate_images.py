@@ -25,7 +25,13 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"using device: {DEVICE}")
 
 VAL_DIR = "../data/val"
-TEST_SIZE = 4096
+#TEST_SIZE = 4096
+
+# Mean and standard deviation of day and night images
+day_means = [0.5, 0.5, 0.5]
+night_means = [0.5, 0.5, 0.5]
+day_stds = [0.5, 0.5, 0.5]
+night_stds = [0.5, 0.5, 0.5]
 
 val_transforms = A.Compose(
     [
@@ -96,11 +102,16 @@ def main():
 
     torch.cuda.empty_cache() # free up memory
 
+    day_val_transforms = ppd.set_val_transforms(day_means, day_stds)
+    night_val_transforms = ppd.set_val_transforms(night_means, night_stds)
+
     val_dataset = ppd.DayNightDataset(
-        root_day=VAL_DIR + "/day",
-        root_night=VAL_DIR + "/night",
-        size=TEST_SIZE,
-        transform=val_transforms,
+        root_day=VAL_DIR + "/small_day", # not enough RAM to load all of the validation images in at once, so do it in chunks
+        root_night=VAL_DIR + "/small_night",
+        #size=TEST_SIZE,
+        #transform=ppd.val_transforms,
+        day_transform=day_val_transforms,
+        night_transform=night_val_transforms,
     )
 
     val_loader = DataLoader(
