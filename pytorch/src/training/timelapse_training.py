@@ -18,6 +18,7 @@ from preprocessing import preprocess_data as ppd
 from models import discriminator as disc
 from models import unet_encoder as un_enc
 from models import timestamped_unet_decoder as time_un_dec
+from models import timestamped_resnet_decoder as time_resn_dec
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"using device: {DEVICE}")
@@ -280,7 +281,8 @@ def main():
     disc_D = disc.Discriminator(in_channels=3).to(DEVICE) 
     disc_N = disc.Discriminator(in_channels=3).to(DEVICE)
     encoder = un_enc.UNet_Encoder(input_channel=3).to(DEVICE)
-    gen = time_un_dec.Timestamped_UNet_Decoder(encoder, 512, 3).to(DEVICE)
+    #gen = time_un_dec.Timestamped_UNet_Decoder(encoder, 512, 3).to(DEVICE)
+    gen = time_resn_dec.TimestampedResNet18Decoder(encoder, 512, 3).to(DEVICE)
 
     # extra discriminators for timelapse training
     disc_Dusk = disc.Discriminator(in_channels=3).to(DEVICE)

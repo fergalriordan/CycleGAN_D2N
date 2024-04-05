@@ -23,6 +23,8 @@ from models import unet as un
 from models import unet_encoder as un_enc
 from models import unet_decoder as un_dec
 from models import unet_resnet18_encoder as un_res
+from models import resnet18_encoder as resn_enc
+from models import resnet18_decoder as resn_dec
 
 # Additional loss function
 import lap_pyramid_loss as lpl
@@ -37,7 +39,7 @@ VAL_DIR = "../data/val"
 # Hyperparameters
 BATCH_SIZE = 1
 LAMBDA_CYCLE = 10
-LAMBDA_IDENTITY = 0.5 
+LAMBDA_IDENTITY = 0.4
 LAMBDA_MID = 0.5
 LAMBDA_LAPLACIAN = 0.5
 NUM_EPOCHS = 100
@@ -53,7 +55,7 @@ TEST_SIZE = 1028
 
 NUM_WORKERS = 2
 
-CHECKPOINT_INCREMENT = 1 # generate test outputs and save model checkpoints at epoch increments of this number
+CHECKPOINT_INCREMENT = 5 # generate test outputs and save model checkpoints at epoch increments of this number
 
 # Checkpoint names
 CHECKPOINT_GENERATOR_D = "gen_d"
@@ -107,8 +109,8 @@ def train_fn(
             # Process for a general discriminator disc_A is as follows:
             # 1. Generate a fake image A_fake from real image B
             # 2. Make predictions on real image A and fake image A_fake
-            # 3. Calculate the MSE between the prediction made for A and 1 (the correct prediction)
-            # 4. Calculate the MSE between the prediction made for A_fake and 0 (the correct prediction)
+            # 3. Calculate the MSE between the prediction made for A and a tensor of 1s (the correct prediction)
+            # 4. Calculate the MSE between the prediction made for A_fake and a tensor of 0s (the correct prediction)
             # 5. Sum the losses
 
             fake_day = gen_D(night)                       
@@ -221,7 +223,7 @@ def train_fn(
               val_fake_day = gen_D(val_night)
               val_fake_night = gen_N(val_day)
 
-              output_directory = f"../outputs/training/outputs/epoch_{epoch}/"
+              output_directory = f"../outputs/training/full_images/epoch_{epoch}/"
 
               if not os.path.exists(output_directory):
                 os.makedirs(output_directory)
@@ -282,11 +284,17 @@ def main():
     elif args.generator_type == 'sharing_unet':
         disc_D = disc.Discriminator(in_channels=3).to(DEVICE)
         disc_N = disc.Discriminator(in_channels=3).to(DEVICE)
-        encoder = un_enc.UNet_Encoder(input_channel=3).to(DEVICE)
-        gen_N = un_dec.UNet_Decoder(encoder, output_channel=3).to(DEVICE)
-        gen_D = un_dec.UNet_Decoder(encoder, output_channel=3).to(DEVICE)
-        summary(encoder, (3, 256, 256), device=DEVICE)
-        summary(gen_N, (3, 256, 256), device=DEVICE)
+        #encoder = un_enc.UNet_Encoder(input_channel=3).to(DEVICE)
+        #gen_N = un_dec.UNet_Decoder(encoder, output_channel=3).to(DEVICE)
+        #gen_D = un_dec.UNet_Decoder(encoder, output_channel=3).to(DEVICE)
+        #summary(encoder, (3, 256, 256), device=DEVICE)
+        #summary(gen_N, (3, 256, 256), device=DEVICE)
+        encoder = resn_enc.ResNet18Encoder().to(DEVICE)
+        gen_N = resn_dec.ResNet18Decoder(encoder, output_channels=3).to(DEVICE)
+        gen_D = resn_dec.ResNet18Decoder(encoder, output_channels=3).to(DEVICE)
+        training_image_size = 224
+        summary(encoder, (3, 224, 224), device=DEVICE)
+        summary(gen_N, (3, 224, 224), device=DEVICE)
 
     elif args.generator_type == 'pretrained_encoder':
         disc_D = disc.Discriminator(in_channels=3).to(DEVICE)
