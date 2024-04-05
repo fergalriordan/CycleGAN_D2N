@@ -17,8 +17,6 @@ from preprocessing import preprocess_data as ppd
 # Models
 from models import generator as gen
 from models import discriminator as disc
-from models import encoder as enc
-from models import sharing_generator as sh_gen
 from models import unet as un
 from models import unet_encoder as un_enc
 from models import unet_decoder as un_dec
@@ -236,7 +234,7 @@ def parse_arguments():
 
     parser = argparse.ArgumentParser(description='Training Script')
 
-    parser.add_argument('--generator_type', type=str, choices=['simple', 'sharing', 'unet', 'sharing_unet', 'pretrained_encoder'], default='simple',
+    parser.add_argument('--generator_type', type=str, choices=['simple', 'unet', 'sharing_unet', 'pretrained_encoder'], default='simple',
                         help='Type of generator to use: simple, sharing, unet, sharing_unet or pretrained_encoder (default: simple)')
     parser.add_argument('--load_model', type=str, default='n',
                         help='Path to a checkpoint folder, e.g. "../outputs/training/checkpoints/epoch_200/" (default: n)')
@@ -264,14 +262,6 @@ def main():
         disc_N = disc.Discriminator(in_channels=3).to(DEVICE)
         gen_N = gen.Generator(img_channels=3, num_residuals=9).to(DEVICE)
         gen_D = gen.Generator(img_channels=3, num_residuals=9).to(DEVICE)
-        summary(gen_N, (3, 256, 256), device=DEVICE)
-
-    elif args.generator_type == 'sharing':
-        disc_D = disc.Discriminator(in_channels=3).to(DEVICE)
-        disc_N = disc.Discriminator(in_channels=3).to(DEVICE)
-        encoder = enc.Encoder(img_channels=3, num_features=64).to(DEVICE)
-        gen_N = sh_gen.sharing_Generator(encoder, num_features=64, num_residuals=9, img_channels=3).to(DEVICE)
-        gen_D = sh_gen.sharing_Generator(encoder, num_features=64, num_residuals=9, img_channels=3).to(DEVICE)
         summary(gen_N, (3, 256, 256), device=DEVICE)
 
     elif args.generator_type == 'unet':
