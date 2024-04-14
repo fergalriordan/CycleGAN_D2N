@@ -16,8 +16,7 @@ from preprocessing import preprocess_data as ppd
 
 # Models
 from models import discriminator as disc
-from models import unet_encoder as un_enc
-from models import timestamped_unet_decoder as time_un_dec
+from models import resnet18_encoder as resn_enc
 from models import timestamped_resnet_decoder as time_resn_dec
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -32,20 +31,25 @@ TIMELAPSE_VAL_DIR = "../data/timelapse_val_data"
 # Hyperparameters
 BATCH_SIZE = 1
 LAMBDA_CYCLE = 10
-LAMBDA_IDENTITY = 0.5 
+LAMBDA_IDENTITY = 0.4 
+LAMBDA_MID = 0
 
-NUM_EPOCHS_MAIN_TRAINING = 50 # day <=> night (big dataset)
+NUM_EPOCHS_MAIN_TRAINING = 0 # day <=> night (big dataset)
 TRAINING_CONFIG = [ # configurations for timelapse traiingin
-    (3, 0.0, 1.0), 
-    (3, 0.0, 0.5), 
-    (3, 0.5, 1.0),
-    (3, 0.0, 1.0),
-    (3, 0.0, 0.5),
-    (3, 0.5, 1.0),
-    (3, 0.0, 1.0),
-    (3, 0.0, 0.5),
-    (3, 0.5, 1.0),
-    (3, 0.0, 1.0)
+    (1, 0.0, 0.5),
+    (1, 0.0, 0.75), 
+    (1, 0.0, 0.25), 
+    (2, 0.0, 1.0),
+
+    (1, 0.0, 0.5),
+    (1, 0.0, 0.75), 
+    (1, 0.0, 0.25), 
+    (2, 0.0, 1.0),
+
+    (1, 0.0, 0.5),
+    (1, 0.0, 0.75), 
+    (1, 0.0, 0.25), 
+    (2, 0.0, 1.0),
     ]
 
 # Dimensions of validation images is fixed, whereas training image dimensions depend on whether a pre-trained encoder is used (224x224) or not (256x256)
@@ -53,7 +57,7 @@ TEST_SIZE = 1028
 
 NUM_WORKERS = 2
 
-CHECKPOINT_INCREMENT = 5 # generate test outputs and save model checkpoints at epoch increments of this number
+CHECKPOINT_INCREMENT = 2 # generate test outputs and save model checkpoints at epoch increments of this number
 
 # Checkpoint names
 CHECKPOINT_GENERATOR = "gen"
@@ -96,7 +100,6 @@ def get_loaders(train_dir1, train_dir2, val_dir1, val_dir2, training_image_size,
         root_day=train_dir1,
         root_night=train_dir2,
         size=training_image_size,
-        #transform=transforms,
         day_transform=day_training_transforms,
         night_transform=night_training_transforms,
     )
@@ -104,7 +107,6 @@ def get_loaders(train_dir1, train_dir2, val_dir1, val_dir2, training_image_size,
         root_day=val_dir1,
         root_night=val_dir2,
         size=validation_image_size,
-        #transform=ppd.val_transforms,
         day_transform=day_val_transforms,
         night_transform=night_val_transforms,
     )
@@ -125,7 +127,7 @@ def get_loaders(train_dir1, train_dir2, val_dir1, val_dir2, training_image_size,
     return loader, val_loader
 
 def train_fn(
-    disc_D, disc_N, gen, timestamp0, timestamp1, loader, val_loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, epoch
+    disc_D, disc_N, gen, timestamp0, timestamp1, loader, val_loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, epoch, encoder
 ):
     Day_reals = 0
     Day_fakes = 0
@@ -197,6 +199,15 @@ def train_fn(
             identity_night_loss = l1(night, identity_night)
             identity_day_loss = l1(day, identity_day)
 
+            # Mid-cycle consistency loss term 
+            mid_cycle_night1, _, _, _ = encoder(day) # u-net encoder returns a tuple (to facilitate skip connections to the upsampling decoder) but only the final latent representation is wanted for mid-cycle loss
+            mid_cycle_night2, _, _, _ = encoder(fake_night)
+            mid_cycle_night_loss = l1(mid_cycle_night1, mid_cycle_night2) 
+
+            mid_cycle_day1, _, _, _ = encoder(night)
+            mid_cycle_day2, _, _, _ = encoder(fake_day)
+            mid_cycle_day_loss = l1(mid_cycle_day1, mid_cycle_day2)
+
             # Calculate basic generator loss (before any optional extra terms)
             G_loss = (
                     loss_G_Night
@@ -205,6 +216,8 @@ def train_fn(
                     + cycle_day_loss * LAMBDA_CYCLE
                     + identity_day_loss * LAMBDA_IDENTITY
                     + identity_night_loss * LAMBDA_IDENTITY
+                    + mid_cycle_night_loss * LAMBDA_MID 
+                    + mid_cycle_day_loss * LAMBDA_MID
                 )
 
         opt_gen.zero_grad()
@@ -229,33 +242,28 @@ def train_fn(
               val_night = val_night.to(DEVICE)
               val_day = val_day.to(DEVICE)
               
-              timestamp0 = torch.tensor([0.0], device=DEVICE).float()  
+              timestamp0 = torch.tensor([0.0], device=DEVICE).float() 
+              timestamp25 = torch.tensor([0.25], device=DEVICE).float() 
               timestamp50 = torch.tensor([0.5], device=DEVICE).float() 
+              timestamp75 = torch.tensor([0.75], device=DEVICE).float()
               timestamp100 = torch.tensor([1.0], device=DEVICE).float()
 
               # Generate images using generators
-              val_0_from_0 = gen(val_day, timestamp0)
+              val_25_from_0 = gen(val_day, timestamp25)
               val_50_from_0 = gen(val_day, timestamp50)
+              val_75_from_0 = gen(val_day, timestamp75)
               val_100_from_0 = gen(val_day, timestamp100)
 
-              val_100_from_100 = gen(val_night, timestamp100)
-              val_50_from_100 = gen(val_night, timestamp50)
-              val_0_from_100 = gen(val_night, timestamp0)
-              #val_fake_day = gen(val_night, day_timestamp)
-              #val_fake_night = gen(val_day, night_timestamp)
-
-              output_directory = f"../outputs/training/outputs/epoch_{epoch}/"
+              output_directory = f"../outputs/training/full_images/epoch_{epoch}/"
 
               if not os.path.exists(output_directory):
                 os.makedirs(output_directory)
               
               # Save the images
-              save_image(val_0_from_0 * 0.5 + 0.5, os.path.join(output_directory, f"day-to-day_{val_idx}.png"))
-              save_image(val_50_from_0 * 0.5 + 0.5, os.path.join(output_directory, f"day-to-dusk_{val_idx}.png"))
-              save_image(val_100_from_0 * 0.5 + 0.5, os.path.join(output_directory, f"day-to-night_{val_idx}.png"))
-              save_image(val_100_from_100 * 0.5 + 0.5, os.path.join(output_directory, f"night-to-night_{val_idx}.png"))
-              save_image(val_50_from_100 * 0.5 + 0.5, os.path.join(output_directory, f"night-to-dusk_{val_idx}.png"))
-              save_image(val_0_from_100 * 0.5 + 0.5, os.path.join(output_directory, f"night-to-day_{val_idx}.png"))
+              save_image(val_25_from_0 * 0.5 + 0.5, os.path.join(output_directory, f"{val_idx}_0.25.png"))
+              save_image(val_50_from_0 * 0.5 + 0.5, os.path.join(output_directory, f"{val_idx}_0.50.png"))
+              save_image(val_75_from_0 * 0.5 + 0.5, os.path.join(output_directory, f"{val_idx}_0.75.png"))
+              save_image(val_100_from_0 * 0.5 + 0.5, os.path.join(output_directory, f"{val_idx}_1.00.png"))
               
 def parse_arguments():
 
@@ -276,18 +284,17 @@ def main():
     
     args = parse_arguments()
 
-    training_image_size = 256
+    training_image_size = 224
 
     disc_D = disc.Discriminator(in_channels=3).to(DEVICE) 
     disc_N = disc.Discriminator(in_channels=3).to(DEVICE)
-    encoder = un_enc.UNet_Encoder(input_channel=3).to(DEVICE)
-    #gen = time_un_dec.Timestamped_UNet_Decoder(encoder, 512, 3).to(DEVICE)
-    gen = time_resn_dec.TimestampedResNet18Decoder(encoder, 512, 3).to(DEVICE)
+    encoder = resn_enc.ResNet18Encoder().to(DEVICE)
+    gen = time_resn_dec.TimestampedResNet18Decoder(encoder, 640, 3).to(DEVICE)
 
     # extra discriminators for timelapse training
     disc_Dusk = disc.Discriminator(in_channels=3).to(DEVICE)
-    #disc_Early_Dusk = disc.Discriminator(in_channels=3).to(DEVICE)
-    #disc_Late_Dusk = disc.Discriminator(in_channels=3).to(DEVICE)
+    disc_Early_Dusk = disc.Discriminator(in_channels=3).to(DEVICE)
+    disc_Late_Dusk = disc.Discriminator(in_channels=3).to(DEVICE)
 
     # use Adam Optimizer for both generator and discriminator
     opt_disc = optim.Adam(
@@ -338,7 +345,6 @@ def main():
         VAL_DIR + "/night", 
         training_image_size,
         TEST_SIZE, 
-        #transforms, 
         BATCH_SIZE, 
         NUM_WORKERS,
         day_training_transforms,
@@ -350,11 +356,10 @@ def main():
     loader1, val_loader1 = get_loaders(
         TIMELAPSE_TRAIN_DIR + "/time_0",
         TIMELAPSE_TRAIN_DIR + "/time_100",
-        TIMELAPSE_VAL_DIR + "/time_0",
-        TIMELAPSE_VAL_DIR + "/time_100",
+        VAL_DIR + "/day",
+        VAL_DIR + "/night",
         training_image_size,
         TEST_SIZE,
-        #transforms,
         BATCH_SIZE,
         NUM_WORKERS,
         day_training_transforms,
@@ -366,11 +371,10 @@ def main():
     loader2, val_loader2 = get_loaders(
         TIMELAPSE_TRAIN_DIR + "/time_0",
         TIMELAPSE_TRAIN_DIR + "/time_50",
-        TIMELAPSE_VAL_DIR + "/time_0",
-        TIMELAPSE_VAL_DIR + "/time_100",
+        VAL_DIR + "/day",
+        VAL_DIR + "/night",
         training_image_size,
         TEST_SIZE,
-        #transforms,
         BATCH_SIZE,
         NUM_WORKERS,
         day_training_transforms,
@@ -380,13 +384,57 @@ def main():
     )
 
     loader3, val_loader3 = get_loaders(
-        TIMELAPSE_TRAIN_DIR + "/time_50",
-        TIMELAPSE_TRAIN_DIR + "/time_100",
-        TIMELAPSE_VAL_DIR + "/time_0",
-        TIMELAPSE_VAL_DIR + "/time_100",
+        TIMELAPSE_TRAIN_DIR + "/time_0",
+        TIMELAPSE_TRAIN_DIR + "/time_75",
+        VAL_DIR + "/day",
+        VAL_DIR + "/night",
         training_image_size,
         TEST_SIZE,
-        #transforms,
+        BATCH_SIZE,
+        NUM_WORKERS,
+        day_training_transforms,
+        night_training_transforms,
+        day_val_transforms,
+        night_val_transforms
+    )
+
+    loader4, val_loader4 = get_loaders(
+        TIMELAPSE_TRAIN_DIR + "/time_0",
+        TIMELAPSE_TRAIN_DIR + "/time_25",
+        VAL_DIR + "/day",
+        VAL_DIR + "/night",
+        training_image_size,
+        TEST_SIZE,
+        BATCH_SIZE,
+        NUM_WORKERS,
+        day_training_transforms,
+        night_training_transforms,
+        day_val_transforms,
+        night_val_transforms
+    )
+
+    loader5, val_loader5 = get_loaders(
+        TIMELAPSE_TRAIN_DIR + "/time_50",
+        TIMELAPSE_TRAIN_DIR + "/time_100",
+        VAL_DIR + "/day",
+        VAL_DIR + "/night",
+        training_image_size,
+        TEST_SIZE,
+        BATCH_SIZE,
+        NUM_WORKERS,
+        day_training_transforms,
+        night_training_transforms,
+        day_val_transforms,
+        night_val_transforms
+    )
+
+    loader6, val_loader6 = get_loaders(
+        TIMELAPSE_TRAIN_DIR + "/time_75",
+        TIMELAPSE_TRAIN_DIR + "/time_100",
+        VAL_DIR + "/day",
+        VAL_DIR + "/night",
+        training_image_size,
+        TEST_SIZE,
         BATCH_SIZE,
         NUM_WORKERS,
         day_training_transforms,
@@ -421,7 +469,8 @@ def main():
             mse,
             d_scaler,
             g_scaler,
-            (epoch+1)
+            (epoch+1),
+            encoder
         )
             
         if (epoch+1) % CHECKPOINT_INCREMENT == 0:
@@ -451,10 +500,22 @@ def main():
             loader, val_loader = loader2, val_loader2
             disc_x, disc_y = disc_D, disc_Dusk
             disc_x_checkpoint_name, disc_y_checkpoint_name = CHECKPOINT_DISCRIMINATOR_D, CHECKPOINT_DISCRIMINATOR_DUSK
-        elif timestamp0 == 0.5 and timestamp1 == 1.0:
+        elif timestamp0 == 0.0 and timestamp1 == 0.75:
             loader, val_loader = loader3, val_loader3
+            disc_x, disc_y = disc_D, disc_Late_Dusk
+            disc_x_checkpoint_name, disc_y_checkpoint_name = CHECKPOINT_DISCRIMINATOR_D, CHECKPOINT_DISCRIMINATOR_LATE_DUSK
+        elif timestamp0 == 0.0 and timestamp1 == 0.25:
+            loader, val_loader = loader4, val_loader4
+            disc_x, disc_y = disc_D, disc_Early_Dusk
+            disc_x_checkpoint_name, disc_y_checkpoint_name = CHECKPOINT_DISCRIMINATOR_D, CHECKPOINT_DISCRIMINATOR_EARLY_DUSK
+        elif timestamp0 == 0.5 and timestamp1 == 1.0:
+            loader, val_loader = loader5, val_loader5
             disc_x, disc_y = disc_Dusk, disc_N
             disc_x_checkpoint_name, disc_y_checkpoint_name = CHECKPOINT_DISCRIMINATOR_DUSK, CHECKPOINT_DISCRIMINATOR_N
+        elif timestamp0 == 0.75 and timestamp1 == 1.0:
+            loader, val_loader = loader6, val_loader6
+            disc_x, disc_y = disc_Late_Dusk, disc_N
+            disc_x_checkpoint_name, disc_y_checkpoint_name = CHECKPOINT_DISCRIMINATOR_LATE_DUSK, CHECKPOINT_DISCRIMINATOR_N
         else : 
             raise ValueError("Invalid timestamp configuration")
         
@@ -475,7 +536,8 @@ def main():
                 mse,
                 d_scaler,
                 g_scaler,
-                (epoch+1+offset)
+                (epoch+1+offset),
+                encoder
             )
 
             if (epoch+1) % CHECKPOINT_INCREMENT == 0:
@@ -484,6 +546,7 @@ def main():
                 if not os.path.exists(epoch_folder):
                     os.makedirs(epoch_folder)
                 
+                print('Saving checkpoints...')
                 save_checkpoint(gen, opt_gen, filename=os.path.join(epoch_folder, f"{CHECKPOINT_GENERATOR}_{epoch+1+offset}.pth.tar"))
                 save_checkpoint(disc_x, opt_disc, filename=os.path.join(epoch_folder, f"{disc_x_checkpoint_name}_{epoch+1+offset}.pth.tar"))
                 save_checkpoint(disc_y, opt_disc, filename=os.path.join(epoch_folder, f"{disc_y_checkpoint_name}_{epoch+1+offset}.pth.tar"))
@@ -492,5 +555,5 @@ def main():
 
 
 if __name__ == "__main__":
-    seed_everything(seed=123) # make the training as reproducible as possible
+    seed_everything(seed=100) # make the training as reproducible as possible
     main()

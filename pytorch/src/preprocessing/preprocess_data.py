@@ -88,11 +88,6 @@ class DayNightDataset(Dataset):
 
         day_img = self.day_transform(image=day_img)["image"]
         night_img = self.night_transform(image=night_img)["image"]
-
-        #if self.transform:
-        #    augmentations = self.transform(image=night_img, image0=day_img)
-        #    night_img = augmentations["image"]
-        #    day_img = augmentations["image0"]
-
+        
         return night_img, day_img
         

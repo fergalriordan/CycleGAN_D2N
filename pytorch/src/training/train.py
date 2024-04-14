@@ -18,8 +18,6 @@ from preprocessing import preprocess_data as ppd
 from models import generator as gen
 from models import discriminator as disc
 from models import unet as un
-from models import unet_encoder as un_enc
-from models import unet_decoder as un_dec
 from models import unet_resnet18_encoder as un_res
 from models import resnet18_encoder as resn_enc
 from models import resnet18_decoder as resn_dec
@@ -38,7 +36,7 @@ VAL_DIR = "../data/val"
 BATCH_SIZE = 1
 LAMBDA_CYCLE = 10
 LAMBDA_IDENTITY = 0.4
-LAMBDA_MID = 0.5
+LAMBDA_MID = 0
 LAMBDA_LAPLACIAN = 0.5
 NUM_EPOCHS = 100
 
@@ -180,12 +178,12 @@ def train_fn(
             # Mid-cycle loss: L1 loss between latent space representaion of input after 1/4 cycle and 3/4 cycle
             # Encourage the encoder to produce a common latent representatoin regardless of input image's original domain
             if encoder is not None: # passing an encoder to the training function is a flag to include a mid-cycle loss term 
-                mid_cycle_night1, _, _, _, _ = encoder(day) # u-net encoder returns a tuple (to facilitate skip connections to the upsampling decoder) but only the final latent representation is wanted for mid-cycle loss
-                mid_cycle_night2, _, _, _, _ = encoder(fake_night)
+                mid_cycle_night1, _, _, _ = encoder(day) # u-net encoder returns a tuple (to facilitate skip connections to the upsampling decoder) but only the final latent representation is wanted for mid-cycle loss
+                mid_cycle_night2, _, _, _ = encoder(fake_night)
                 mid_cycle_night_loss = l1(mid_cycle_night1, mid_cycle_night2) 
 
-                mid_cycle_day1, _, _, _, _ = encoder(night)
-                mid_cycle_day2, _, _, _, _ = encoder(fake_day)
+                mid_cycle_day1, _, _, _ = encoder(night)
+                mid_cycle_day2, _, _, _ = encoder(fake_day)
                 mid_cycle_day_loss = l1(mid_cycle_day1, mid_cycle_day2)
 
                 G_loss = (
@@ -274,11 +272,6 @@ def main():
     elif args.generator_type == 'sharing_unet':
         disc_D = disc.Discriminator(in_channels=3).to(DEVICE)
         disc_N = disc.Discriminator(in_channels=3).to(DEVICE)
-        #encoder = un_enc.UNet_Encoder(input_channel=3).to(DEVICE)
-        #gen_N = un_dec.UNet_Decoder(encoder, output_channel=3).to(DEVICE)
-        #gen_D = un_dec.UNet_Decoder(encoder, output_channel=3).to(DEVICE)
-        #summary(encoder, (3, 256, 256), device=DEVICE)
-        #summary(gen_N, (3, 256, 256), device=DEVICE)
         encoder = resn_enc.ResNet18Encoder().to(DEVICE)
         gen_N = resn_dec.ResNet18Decoder(encoder, output_channels=3).to(DEVICE)
         gen_D = resn_dec.ResNet18Decoder(encoder, output_channels=3).to(DEVICE)

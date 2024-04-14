@@ -27,6 +27,11 @@ from models import unet_encoder as un_enc
 from models import unet_decoder as un_dec
 from models import unet_resnet18_encoder as un_res
 
+from models import unet_resnet18_encoder as un_res
+from models import resnet18_encoder as resn_enc
+from models import resnet18_decoder as resn_dec
+from models import timestamped_resnet_decoder as time_resn_dec
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"using device: {DEVICE}")
 
@@ -103,9 +108,9 @@ def main():
         gen_D = un.UNet(input_channel=3, output_channel=3).to(DEVICE)
 
     elif model_type == 'sharing_unet':
-        encoder = un_enc.UNet_Encoder(input_channel=3).to(DEVICE)
-        gen_N = un_dec.UNet_Decoder(encoder, output_channel=3).to(DEVICE)
-        gen_D = un_dec.UNet_Decoder(encoder, output_channel=3).to(DEVICE)
+        encoder = resn_enc.ResNet18Encoder().to(DEVICE)
+        gen_N = resn_dec.ResNet18Decoder(encoder, output_channels=3).to(DEVICE)
+        gen_D = resn_dec.ResNet18Decoder(encoder, output_channels=3).to(DEVICE)
 
     elif model_type == 'pretrained_encoder':
         gen_N = un_res.UnetResNet18(output_channels=3).to(DEVICE)

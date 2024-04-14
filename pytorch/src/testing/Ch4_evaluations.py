@@ -20,23 +20,17 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from preprocessing import preprocess_data as ppd
 
-from models import generator as gen
-from models import encoder as enc
-from models import sharing_generator as sh_gen
-from models import unet as un
-from models import unet_encoder as un_enc
-from models import unet_decoder as un_dec
 from models import unet_resnet18_encoder as un_res
+from models import resnet18_encoder as resn_enc
+from models import resnet18_decoder as resn_dec
+from models import timestamped_resnet_decoder as time_resn_dec
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"using device: {DEVICE}")
 
 DIR = "../data/train"
-NIGHT_GT_STATS_PATH = '../data/inception_stats/night/night_statistics.npz'
-DAY_GT_STATS_PATH = '../data/inception_stats/day/day_statistics.npz'
-FAKE_N_PATH = '../data/inception_images/night'
-FAKE_D_PATH = '../data/inception_images/day'
-SIZE = 299 # generate images with the same dimensions as the training data for the inception model
+
+SIZE = 224 # generate images with the same dimensions as the training data for the inception model
 
 # Mean and standard deviation of day and night images
 day_means = [0.5, 0.5, 0.5]
@@ -72,13 +66,13 @@ def seed_everything(seed=42):
 def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--DnCNN_path", type=str, help="Path to the DnCNN generator checkpoints"
+        "--basic_path", type=str, help="Path to the basic U-Net generator checkpoints"
     )
     parser.add_argument(
-        "--UNet_path", type=str, help="Path to the U-Net generator checkpoints"
+        "--sharing_path", type=str, help="Path to the sharing U-Net generator checkpoints"
     )
     parser.add_argument(
-        "--ResNet_path", type=str, help="Path to the ResNet-18 generator checkpoints"
+        "--single_path", type=str, help="Path to the single generator checkpoint"
     )
     return parser.parse_args()
 
@@ -102,6 +96,31 @@ def generate_images(gen_N, gen_D, loader):
         generated_day_images.append(fake_day)
     
     return day_images, night_images, generated_night_images, generated_day_images
+
+def generate_images_from_timestamps(gen, loader):
+    day_images = []
+    night_images = []
+    generated_night_images = []
+    generated_day_images = []
+
+    for idx, (night_img, day_img) in enumerate(loader):
+        day_img = day_img.to(DEVICE)
+        night_img = night_img.to(DEVICE)
+
+        timestamp0 = torch.tensor([0.0], device=DEVICE).float() 
+        timestamp100 = torch.tensor([1.0], device=DEVICE).float()
+
+        with torch.no_grad():
+            fake_night = gen(day_img, timestamp100)
+            fake_day = gen(night_img, timestamp0)
+            
+        day_images.append(day_img)
+        night_images.append(night_img)
+        generated_night_images.append(fake_night)
+        generated_day_images.append(fake_day)
+    
+    return day_images, night_images, generated_night_images, generated_day_images
+
 
 def compute_kid_scores(day_images, night_images, generated_night_images, generated_day_images):
     kid_D2N = KernelInceptionDistance(subsets=6, subset_size=50, normalize=True).to(DEVICE)
@@ -150,10 +169,18 @@ def calculate_metrics(gen_N, gen_D, loader):
 
     return kid_N_mean, kid_N_std, kid_D_mean, kid_D_std, fid_N_mean, fid_D_mean
 
+def calculate_metrics_timestamped_generator(gen, loader):
+    day_images, night_images, generated_night_images, generated_day_images = generate_images_from_timestamps(gen, loader)
+    kid_N_mean, kid_N_std, kid_D_mean, kid_D_std = compute_kid_scores(day_images, night_images, generated_night_images, generated_day_images)
+    fid_N_mean, fid_D_mean = compute_fid_scores(day_images, night_images, generated_night_images, generated_day_images)
+
+    return kid_N_mean, kid_N_std, kid_D_mean, kid_D_std, fid_N_mean, fid_D_mean
+
+
 def evaluate_model(model_path, gen_N, gen_D, loader):
     results_list = []
     
-    for epoch in range(5, 101, 5):
+    for epoch in range(10, 101, 10):
         print(f"Epoch: {epoch}")
         gen_N_checkpoint = model_path + f"epoch_{epoch}/gen_n_{epoch}.pth.tar"
         gen_D_checkpoint = model_path + f"epoch_{epoch}/gen_d_{epoch}.pth.tar"    
@@ -162,6 +189,29 @@ def evaluate_model(model_path, gen_N, gen_D, loader):
         load_checkpoint_for_testing(gen_D_checkpoint, gen_D)
 
         kid_N_mean, kid_N_std, kid_D_mean, kid_D_std, fid_N_mean, fid_D_mean = calculate_metrics(gen_N, gen_D, loader)
+        
+        results_list.append({
+            "Epoch": epoch,
+            "KID_N_mean": kid_N_mean.item(),
+            "KID_N_std": kid_N_std.item(),
+            "KID_D_mean": kid_D_mean.item(),
+            "KID_D_std": kid_D_std.item(),
+            "FID_N_mean": fid_N_mean.item(),
+            "FID_D_mean": fid_D_mean.item(),
+        })
+        
+    return pd.DataFrame(results_list)
+
+def evaluate_timestamped_model(model_path, gen, loader):
+    results_list = []
+    
+    for epoch in range(10, 101, 10):
+        print(f"Epoch: {epoch}")
+        gen_N_checkpoint = model_path + f"epoch_{epoch}/gen_{epoch}.pth.tar"  
+
+        load_checkpoint_for_testing(gen_N_checkpoint, gen)
+
+        kid_N_mean, kid_N_std, kid_D_mean, kid_D_std, fid_N_mean, fid_D_mean = calculate_metrics_timestamped_generator(gen, loader)
         
         results_list.append({
             "Epoch": epoch,
@@ -194,40 +244,38 @@ def main():
         shuffle=False,
         pin_memory=True,
     )
-    
-    # DnCNN generators
-    DnCNN_gen_N = gen.Generator(img_channels=3, num_residuals=9).to(DEVICE)
-    DnCNN_gen_D = gen.Generator(img_channels=3, num_residuals=9).to(DEVICE)
-
-    # UNet generators
-    UNet_gen_N = un.UNet(input_channel=3, output_channel=3).to(DEVICE)
-    UNet_gen_D = un.UNet(input_channel=3, output_channel=3).to(DEVICE)
 
     # ResNet generators
-    ResNet_gen_N = un_res.UnetResNet18(output_channels=3).to(DEVICE)
-    ResNet_gen_D = un_res.UnetResNet18(output_channels=3).to(DEVICE)
+    basic_gen_N = un_res.UnetResNet18(output_channels=3).to(DEVICE)
+    basic_gen_D = un_res.UnetResNet18(output_channels=3).to(DEVICE)
 
-    DnCNN_path = args.DnCNN_path
-    UNet_path = args.UNet_path
-    ResNet_path = args.ResNet_path
+    # Sharing generators
+    encoder = resn_enc.ResNet18Encoder().to(DEVICE)
+    sharing_gen_N = resn_dec.ResNet18Decoder(encoder, output_channels=3).to(DEVICE)
+    sharing_gen_D = resn_dec.ResNet18Decoder(encoder, output_channels=3).to(DEVICE)
+
+    # Timestamped generator
+    encoder = resn_enc.ResNet18Encoder().to(DEVICE)
+    single_gen = time_resn_dec.TimestampedResNet18Decoder(encoder, 640, 3).to(DEVICE)
+
+    basic_path = args.basic_path
+    sharing_path = args.sharing_path
+    single_path = args.single_path
 
     _ = torch.manual_seed(42)
 
-    print("Evaluating DnCNN...")
-    DnCNN_results = evaluate_model(DnCNN_path, DnCNN_gen_N, DnCNN_gen_D, loader)
-    DnCNN_results.to_csv('DnCNN.csv', index=False)
-    print('DnCNN Results saved to DnCNN.csv')
-    print("Evaluating UNet...")
-    UNet_results = evaluate_model(UNet_path, UNet_gen_N, UNet_gen_D, loader)
-    UNet_results.to_csv('UNet.csv', index=False)
-    print('UNet Results saved to UNet.csv')
-    print("Evaluating ResNet...")
-    ResNet_results = evaluate_model(ResNet_path, ResNet_gen_N, ResNet_gen_D, loader)
-    ResNet_results.to_csv('ResNet.csv', index=False)
-    print('ResNet Results saved to ResNet.csv')
-
-    print("Evaluating Sharing U-Net...")
-    sharing_results = evaluate_model()
+    print("Evaluating Basic...")
+    DnCNN_results = evaluate_model(basic_path, basic_gen_N, basic_gen_D, loader)
+    DnCNN_results.to_csv('basic.csv', index=False)
+    print('Basic results saved to basic.csv')
+    print("Evaluating Sharing...")
+    UNet_results = evaluate_model(sharing_path, sharing_gen_N, sharing_gen_D, loader)
+    UNet_results.to_csv('sharing.csv', index=False)
+    print('Sharing results saved to sharing.csv')
+    print("Evaluating Timestamped...")
+    ResNet_results = evaluate_timestamped_model(single_path, single_gen, loader)
+    ResNet_results.to_csv('timestamped.csv', index=False)
+    print('Timestamped results saved to timestamped.csv')
 
 if __name__ == "__main__":
     seed_everything()

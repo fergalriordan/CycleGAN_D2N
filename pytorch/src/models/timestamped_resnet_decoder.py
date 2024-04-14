@@ -44,7 +44,7 @@ class TimestampedResNet18Decoder(nn.Module):
         self.timestamp_embedding_channels = timestamp_embedding_channels # define a number of channels for the timestamp embedding
 
         # Up Blocks
-        self.conv_block6 = ConvBlock(512 + 128, 256)
+        self.conv_block6 = ConvBlock(512 + 128 + timestamp_embedding_channels, 256)
         self.conv_block7 = ConvBlock(256 + 64, 128)
         self.conv_block8 = ConvBlock(128 + 64, 64)
         self.conv_block9 = ConvBlock(64, 32)
@@ -55,16 +55,16 @@ class TimestampedResNet18Decoder(nn.Module):
         # Last convolution
         self.last_conv = torch.nn.Conv2d(32, 3, 1)
 
-    def forward(self, x):
+    def forward(self, x, timestamp):
 
-        x, x4, x3, x1 = self.encoder(x)
+        x5, x4, x3, x1 = self.encoder(x)
 
         # expand the timestamp info to the same height and width as the spatial info [B, C, H, W]
         # it can then be concatenated with the output of the first upsampling step
-        timestamp = timestamp.view(-1, 1, 1, 1).expand(-1, self.timestamp_embedding_channels, x4.size(2), x4.size(3))
-
-        x = self.upsample(x) # x: 28
-        x = torch.cat((x, timestamp), dim=1) # concatenate timestamp info with spatial info
+        timestamp = timestamp.view(-1, 1, 1, 1).expand(-1, self.timestamp_embedding_channels, x5.size(2), x5.size(3))
+        x = torch.cat((x5, timestamp), dim=1) # concatenate timestamp info with spatial info
+        
+        x = self.upsample(x) # x: 14
         x = self.crop(x4, x) # x: 28
         x = self.conv_block6(x) # x: 28
 
