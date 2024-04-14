@@ -21,11 +21,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from preprocessing import preprocess_data as ppd
 
 from models import generator as gen
-from models import encoder as enc
-from models import sharing_generator as sh_gen
 from models import unet as un
-from models import unet_encoder as un_enc
-from models import unet_decoder as un_dec
 from models import unet_resnet18_encoder as un_res
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

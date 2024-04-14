@@ -1,10 +1,9 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 
-# Load your dataframes
+
 df = pd.read_csv('pytorch/outputs/testing/Ch4_metric_data/ResNet.csv')
 
-# Set up the plotting
 plt.figure(figsize=(8, 5))
 
 plt.plot(df['Epoch'], df['FID_N_mean'], label='Night Images', linestyle='-', color='blue')

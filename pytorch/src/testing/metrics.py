@@ -20,17 +20,12 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from preprocessing import preprocess_data as ppd
 
 from models import generator as gen
-from models import encoder as enc
-from models import sharing_generator as sh_gen
 from models import unet as un
-from models import unet_encoder as un_enc
-from models import unet_decoder as un_dec
 from models import unet_resnet18_encoder as un_res
 
 from models import unet_resnet18_encoder as un_res
 from models import resnet18_encoder as resn_enc
 from models import resnet18_decoder as resn_dec
-from models import timestamped_resnet_decoder as time_resn_dec
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"using device: {DEVICE}")
@@ -97,11 +92,6 @@ def main():
     if model_type == "simple":
         gen_N = gen.Generator(img_channels=3, num_residuals=9).to(DEVICE)
         gen_D = gen.Generator(img_channels=3, num_residuals=9).to(DEVICE)
-
-    elif model_type == 'sharing':
-        encoder = enc.Encoder(img_channels=3, num_features=64).to(DEVICE)
-        gen_N = sh_gen.sharing_Generator(encoder, num_features=64, num_residuals=9, img_channels=3).to(DEVICE)
-        gen_D = sh_gen.sharing_Generator(encoder, num_features=64, num_residuals=9, img_channels=3).to(DEVICE)
 
     elif model_type == 'unet':
         gen_N = un.UNet(input_channel=3, output_channel=3).to(DEVICE)

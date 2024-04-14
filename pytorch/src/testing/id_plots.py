@@ -12,10 +12,10 @@ kid_mean_n2d = np.array([0.0808, 0.0815, 0.0852, 0.1120])
 fid_mean_d2n = np.array([128.01, 126.35, 108.68, 131.46])
 fid_mean_n2d = np.array([134.86, 139.66, 138.92, 162.49])
 
-# Plotting KID Metrics
+# Plot
 plt.figure(figsize=(14, 6))
 
-# Plotting FID Metrics
+# FID 
 plt.subplot(1, 2, 1)
 plt.plot(mid_weights, fid_mean_d2n, label='Night Images', color='blue', linestyle='-', marker='o')
 plt.plot(mid_weights, fid_mean_n2d, label='Day Images', color='blue', linestyle='--', marker='o')
@@ -26,7 +26,7 @@ plt.ylim(100, 200)
 plt.legend()
 plt.grid(True)
 
-
+# KID
 plt.subplot(1, 2, 2)
 plt.errorbar(mid_weights, kid_mean_d2n, label='Night Images', color='blue', linestyle='-', marker='o')
 plt.errorbar(mid_weights, kid_mean_n2d, label='Day Images', color='blue', linestyle='--', marker='o')
