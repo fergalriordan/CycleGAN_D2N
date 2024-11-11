@@ -17,12 +17,19 @@ The script for preprocessing the training data is located in the pytorch/src/pre
 The models that were implemented in this project can be found in the pytorch/src/models directory. The models are as follows: 
 
 ** discriminator.py - The adversarial PatchGAN discriminator
+
 ** generator.py - The original CycleGAN generator
+
 ** unet.py - A basic U-Net generator
+
 ** unet_encoder.py, unet_decoder.py - U-Net encoder and decoder scripts that were used to experiment with encoder sharing. Note that these scripts were not used to generate any results in the final report: the ResNet-18 encoder was shared instead. 
+
 ** unet_resnet_encoder.py - A U-Net generator with a pre-trained ResNet-18 encoder
+
 ** resnet_encoder.py, resnet_decoder.py - ResNet-18 encoder and a corresponding decoder script for use in the encoder-sharing experiments. 
+
 ** timestamped_unet_decoder - Decoder for a timestamped generator that doesn't use a ResNet-18 encoder. Again, this was not used to generate any results in the final report, it was merely used in an experimental fashion in the earlier stages of the project
+
 ** timestamped_resnet_decoder - Decoder for a timestamped generator with a ResNet-18 encoder. 
 
 # Training
